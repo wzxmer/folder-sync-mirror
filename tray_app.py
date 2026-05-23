@@ -363,6 +363,10 @@ class RoundedPanel(tk.Canvas):
 
 
 def app_dir() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    if sys.platform.startswith("linux"):
+        return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "folder-sync-mirror"
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
@@ -1371,6 +1375,7 @@ class MirrorTrayApp:
 
 
 def ensure_config_exists() -> None:
+    BASE_DIR.mkdir(parents=True, exist_ok=True)
     if CONFIG_PATH.exists():
         return
     create_default_config(CONFIG_PATH)

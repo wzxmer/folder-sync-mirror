@@ -35,7 +35,7 @@ On macOS, open:
 FolderSyncMirror.app
 ```
 
-The first launch creates `config.json` next to the app or executable. Users normally do not need to edit it by hand because the app window provides all configuration controls.
+On Windows, the first launch creates `config.json` next to the executable. On macOS and Linux, configuration and logs are stored in the current user's app configuration folder. Users normally do not need to edit the config by hand because the app window provides all controls.
 
 Synchronization is disabled by default. Choose a source folder and target folder, adjust rules if needed, then click `Start Sync`. After starting, the same button becomes `Pause Sync`.
 
