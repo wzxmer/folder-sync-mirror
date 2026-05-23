@@ -59,6 +59,86 @@ LOG_MAX_BYTES = 1024 * 1024
 LOG_MAX_LINES = 1000
 LOG_CLEAN_INTERVAL_SECONDS = 24 * 60 * 60
 
+TRANSLATIONS = {
+    "zh": {
+        "language": "语言",
+        "status": "状态",
+        "settings": "同步设置",
+        "source": "来源",
+        "target": "目标",
+        "choose": "选择",
+        "clear": "清空",
+        "include": "同步内容",
+        "exclude": "排除内容",
+        "keep": "保留内容",
+        "delay": "触发延迟",
+        "seconds": "秒",
+        "options": "同步选项",
+        "clean_extra": "清理目标多余文件",
+        "startup": "开机启动并启用同步",
+        "keep_hint": "保留内容会保留，并且不会覆盖",
+        "start": "启动同步",
+        "pause": "暂停同步",
+        "resume": "继续同步",
+        "save": "保存配置",
+        "sync_now": "立即同步",
+        "sync_once": "立即同步一次",
+        "show_window": "显示窗口",
+        "open_log": "打开日志",
+        "exit": "退出",
+        "author": "作者：浮生",
+        "email": "邮箱：wzxmer@outlook.com",
+        "select_file": "选择文件",
+        "select_folder": "选择文件夹",
+        "saved": "已保存配置",
+    },
+    "en": {
+        "language": "Language",
+        "status": "Status",
+        "settings": "Sync Settings",
+        "source": "Source",
+        "target": "Target",
+        "choose": "Choose",
+        "clear": "Clear",
+        "include": "Sync Content",
+        "exclude": "Exclude",
+        "keep": "Keep Content",
+        "delay": "Trigger Delay",
+        "seconds": "sec",
+        "options": "Options",
+        "clean_extra": "Clean extra target files",
+        "startup": "Start with system and sync",
+        "keep_hint": "Kept content will not be deleted or overwritten",
+        "start": "Start Sync",
+        "pause": "Pause Sync",
+        "resume": "Resume Sync",
+        "save": "Save",
+        "sync_now": "Sync Now",
+        "sync_once": "Sync once now",
+        "show_window": "Show window",
+        "open_log": "Open Log",
+        "exit": "Exit",
+        "author": "Author: Fusheng",
+        "email": "Email: wzxmer@outlook.com",
+        "select_file": "Select files",
+        "select_folder": "Select folder",
+        "saved": "Saved",
+    },
+}
+
+STATUS_TRANSLATIONS = {
+    "未启动": "Not Started",
+    "已暂停": "Paused",
+    "运行中": "Running",
+    "启动中": "Starting",
+    "监听中": "Listening",
+    "检测到变动": "Change Detected",
+    "正在同步": "Syncing",
+    "同步完成": "Sync Complete",
+    "监听或同步失败": "Sync Failed",
+    "已保存配置": "Saved",
+}
+
 
 class SourceChangeHandler(FileSystemEventHandler):
     def __init__(self, callback) -> None:
@@ -405,6 +485,9 @@ class MirrorTrayApp:
         self.last_log_cleanup = 0.0
         self.lock = threading.Lock()
         self.root: tk.Tk | None = None
+        self.language = "en" if os.environ.get("FOLDER_SYNC_LANG") == "en" else "zh"
+        self.language_var: tk.StringVar | None = None
+        self.i18n_widgets: list[tuple[object, str]] = []
         self.status_var: tk.StringVar | None = None
         self.status_label: StatusPill | None = None
         self.source_var: tk.StringVar | None = None
@@ -428,15 +511,15 @@ class MirrorTrayApp:
 
     def build_menu(self) -> pystray.Menu:
         return pystray.Menu(
-            pystray.MenuItem(lambda _: f"状态: {self.status}", None, enabled=False),
+            pystray.MenuItem(lambda _: f"{self.t('status')}: {self.display_status(self.status)}", None, enabled=False),
             pystray.MenuItem(
                 lambda _: self.sync_control_text(),
                 self.toggle_sync,
             ),
-            pystray.MenuItem("立即同步一次", self.sync_now),
-            pystray.MenuItem("显示窗口", self.show_window, default=True),
-            pystray.MenuItem("打开日志", self.open_log),
-            pystray.MenuItem("退出", self.quit),
+            pystray.MenuItem(lambda _: self.t("sync_once"), self.sync_now),
+            pystray.MenuItem(lambda _: self.t("show_window"), self.show_window, default=True),
+            pystray.MenuItem(lambda _: self.t("open_log"), self.open_log),
+            pystray.MenuItem(lambda _: self.t("exit"), self.quit),
         )
 
     def make_icon(self) -> Image.Image:
@@ -472,9 +555,9 @@ class MirrorTrayApp:
             if temporary:
                 self.flash_until = now + 2.0
         if self.root and self.status_var:
-            self.root.after(0, self.status_var.set, status)
+            self.root.after(0, self.status_var.set, self.display_status(status))
             if self.status_label:
-                self.root.after(0, self.status_label.configure, {"text": status})
+                self.root.after(0, self.status_label.configure, {"text": self.display_status(status)})
             self.root.after(0, self.update_status_color, status)
         self.icon.update_menu()
 
@@ -503,8 +586,38 @@ class MirrorTrayApp:
 
     def sync_control_text(self) -> str:
         if not self.started:
-            return "启动同步"
-        return "继续同步" if self.paused else "暂停同步"
+            return self.t("start")
+        return self.t("resume") if self.paused else self.t("pause")
+
+    def t(self, key: str) -> str:
+        return TRANSLATIONS.get(self.language, TRANSLATIONS["zh"]).get(key, key)
+
+    def display_status(self, status: str) -> str:
+        if self.language == "en":
+            return STATUS_TRANSLATIONS.get(status, status)
+        return status
+
+    def register_i18n(self, widget: object, key: str) -> None:
+        self.i18n_widgets.append((widget, key))
+
+    def set_language(self, _event=None) -> None:
+        if not self.language_var:
+            return
+        self.language = "en" if self.language_var.get() == "English" else "zh"
+        self.refresh_language()
+
+    def refresh_language(self) -> None:
+        for widget, key in self.i18n_widgets:
+            try:
+                widget.configure(text=self.t(key))
+            except tk.TclError:
+                pass
+        if self.status_var and self.status_label:
+            shown = self.display_status(self.status)
+            self.status_var.set(shown)
+            self.status_label.configure(text=shown)
+        self.update_sync_button()
+        self.icon.update_menu()
 
     def update_sync_button(self) -> None:
         if self.root and self.pause_button:
@@ -540,17 +653,30 @@ class MirrorTrayApp:
 
         header = tk.Frame(outer, bg=BG_COLOR)
         header.pack(fill="x")
-        title_box = tk.Frame(header, bg=BG_COLOR)
-        title_box.pack(side="left")
-        tk.Label(
-            title_box,
-            text=f"{APP_NAME} {__version__}",
+        language_box = tk.Frame(header, bg=BG_COLOR)
+        language_box.pack(side="left", anchor="n")
+        language_label = tk.Label(
+            language_box,
+            text=self.t("language"),
             bg=BG_COLOR,
             fg=TEXT_COLOR,
-            font=(UI_FONT, 17, "bold"),
-        ).pack(anchor="w")
-        self.status_var = tk.StringVar(value=self.status)
-        self.status_label = StatusPill(header, self.status)
+            font=(UI_FONT, 10, "bold"),
+        )
+        language_label.pack(side="left", padx=(0, 8))
+        self.register_i18n(language_label, "language")
+        self.language_var = tk.StringVar(value="English" if self.language == "en" else "中文")
+        language_select = ttk.Combobox(
+            language_box,
+            textvariable=self.language_var,
+            values=("中文", "English"),
+            state="readonly",
+            width=10,
+            font=(UI_FONT, 10),
+        )
+        language_select.pack(side="left")
+        language_select.bind("<<ComboboxSelected>>", self.set_language)
+        self.status_var = tk.StringVar(value=self.display_status(self.status))
+        self.status_label = StatusPill(header, self.display_status(self.status))
         self.status_label.pack(side="right", anchor="n", pady=(4, 0))
         self.update_status_color(self.status)
         self.create_config_form(outer)
@@ -560,38 +686,42 @@ class MirrorTrayApp:
         button_row = tk.Frame(button_panel.content, bg=CARD_COLOR)
         button_row.pack(fill="x")
         self.pause_button = self.make_button(
-            button_row, "启动同步", self.toggle_sync, variant="success"
+            button_row, "start", self.toggle_sync, variant="success"
         )
         self.pause_button.pack(side="left")
         self.make_button(
-            button_row, "保存配置", self.save_form_config, variant="primary"
+            button_row, "save", self.save_form_config, variant="primary"
         ).pack(side="left", padx=(8, 0))
-        self.make_button(button_row, "立即同步", self.sync_now, variant="info").pack(
+        self.make_button(button_row, "sync_now", self.sync_now, variant="info").pack(
             side="left", padx=(8, 0)
         )
-        self.make_button(button_row, "打开日志", self.open_log).pack(
+        self.make_button(button_row, "open_log", self.open_log).pack(
             side="left", padx=(8, 0)
         )
-        self.make_button(button_row, "退出", self.quit, variant="danger").pack(
+        self.make_button(button_row, "exit", self.quit, variant="danger").pack(
             side="left", padx=(8, 0)
         )
 
         author_box = tk.Frame(button_row, bg=CARD_COLOR)
         author_box.pack(side="right", padx=(8, 0))
-        tk.Label(
+        author_label = tk.Label(
             author_box,
-            text="作者：浮生",
+            text=self.t("author"),
             bg=CARD_COLOR,
             fg="#475467",
             font=(UI_FONT, 8),
-        ).pack(anchor="e")
-        tk.Label(
+        )
+        author_label.pack(anchor="e")
+        self.register_i18n(author_label, "author")
+        email_label = tk.Label(
             author_box,
-            text="邮箱：wzxmer@outlook.com",
+            text=self.t("email"),
             bg=CARD_COLOR,
             fg="#475467",
             font=(UI_FONT, 8),
-        ).pack(anchor="e")
+        )
+        email_label.pack(anchor="e")
+        self.register_i18n(email_label, "email")
         self.load_config_into_form()
 
     def configure_style(self) -> None:
@@ -631,12 +761,16 @@ class MirrorTrayApp:
     def make_button(
         self,
         parent: tk.Misc,
-        text: str,
+        text_key: str,
         command,
         variant: str = "secondary",
         min_width: int = 72,
     ) -> RoundedButton:
-        return RoundedButton(parent, text, command, variant=variant, min_width=min_width)
+        button = RoundedButton(
+            parent, self.t(text_key), command, variant=variant, min_width=min_width
+        )
+        self.register_i18n(button, text_key)
+        return button
 
     def create_config_form(self, parent: tk.Misc) -> None:
         panel = RoundedPanel(parent, radius=14, padx=18, pady=16)
@@ -646,13 +780,15 @@ class MirrorTrayApp:
         form.columnconfigure(1, weight=1)
         form.columnconfigure(2, minsize=64)
 
-        tk.Label(
+        settings_label = tk.Label(
             form,
-            text="同步设置",
+            text=self.t("settings"),
             bg=CARD_COLOR,
             fg=TEXT_COLOR,
             font=(UI_FONT, 11, "bold"),
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
+        )
+        settings_label.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
+        self.register_i18n(settings_label, "settings")
 
         self.source_var = tk.StringVar()
         self.target_var = tk.StringVar()
@@ -660,19 +796,19 @@ class MirrorTrayApp:
         self.delete_extra_var = tk.BooleanVar(value=True)
         self.startup_var = tk.BooleanVar(value=is_startup_enabled())
 
-        self.make_label(form, "来源").grid(row=1, column=0, sticky="w", pady=5)
+        self.make_label(form, "source").grid(row=1, column=0, sticky="w", pady=5)
         self.make_entry(form, self.source_var).grid(
             row=1, column=1, sticky="ew", padx=(10, 10), pady=5
         )
-        self.make_button(form, "选择", self.choose_source, min_width=60).grid(
+        self.make_button(form, "choose", self.choose_source, min_width=60).grid(
             row=1, column=2, pady=5
         )
 
-        self.make_label(form, "目标").grid(row=2, column=0, sticky="w", pady=5)
+        self.make_label(form, "target").grid(row=2, column=0, sticky="w", pady=5)
         self.make_entry(form, self.target_var).grid(
             row=2, column=1, sticky="ew", padx=(10, 10), pady=5
         )
-        self.make_button(form, "选择", self.choose_target, min_width=60).grid(
+        self.make_button(form, "choose", self.choose_target, min_width=60).grid(
             row=2, column=2, pady=5
         )
 
@@ -684,7 +820,7 @@ class MirrorTrayApp:
         source_rules = tk.Frame(rules, bg=CARD_COLOR)
         source_rules.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         source_rules.columnconfigure(0, weight=1)
-        self.make_label(source_rules, "同步内容").grid(
+        self.make_label(source_rules, "include").grid(
             row=0, column=0, sticky="w"
         )
 
@@ -696,58 +832,58 @@ class MirrorTrayApp:
         include_buttons.pack(anchor="w")
         self.make_button(
             include_buttons,
-            "选择",
+            "choose",
             self.add_include_items,
             min_width=76,
         ).pack(side="left")
         self.make_button(
             include_buttons,
-            "清空",
+            "clear",
             self.clear_include,
             min_width=62,
         ).pack(side="left", padx=(6, 0))
 
         source_exclude_panel = tk.Frame(source_rules, bg=CARD_COLOR)
         source_exclude_panel.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        self.make_label(source_exclude_panel, "排除内容").pack(anchor="w", pady=(0, 8))
+        self.make_label(source_exclude_panel, "exclude").pack(anchor="w", pady=(0, 8))
         self.exclude_text = self.create_rule_text(source_exclude_panel, height=5)
         self.pack_rule_text(source_exclude_panel, self.exclude_text, pady=(0, 6))
         source_exclude_buttons = tk.Frame(source_exclude_panel, bg=CARD_COLOR)
         source_exclude_buttons.pack(anchor="w")
         self.make_button(
             source_exclude_buttons,
-            "选择",
+            "choose",
             self.add_exclude_items,
             min_width=76,
         ).pack(side="left")
         self.make_button(
             source_exclude_buttons,
-            "清空",
+            "clear",
             self.clear_exclude,
             min_width=62,
         ).pack(side="left", padx=(6, 0))
 
         protect_panel = tk.Frame(rules, bg=CARD_COLOR)
         protect_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        self.make_label(protect_panel, "保留内容").pack(anchor="w")
+        self.make_label(protect_panel, "keep").pack(anchor="w")
         self.target_protect_text = self.create_rule_text(protect_panel, height=13)
         self.pack_rule_text(protect_panel, self.target_protect_text, pady=(8, 6))
         protect_buttons = tk.Frame(protect_panel, bg=CARD_COLOR)
         protect_buttons.pack(anchor="w")
         self.make_button(
             protect_buttons,
-            "选择",
+            "choose",
             self.add_target_protected_items,
             min_width=76,
         ).pack(side="left")
         self.make_button(
             protect_buttons,
-            "清空",
+            "clear",
             self.clear_target_protect,
             min_width=62,
         ).pack(side="left", padx=(6, 0))
 
-        self.make_label(form, "触发延迟").grid(row=4, column=0, sticky="w", pady=(14, 3))
+        self.make_label(form, "delay").grid(row=4, column=0, sticky="w", pady=(14, 3))
         tk.Spinbox(
             form,
             from_=0,
@@ -763,30 +899,34 @@ class MirrorTrayApp:
             highlightbackground=BORDER_COLOR,
             highlightcolor=PRIMARY_COLOR,
         ).grid(row=4, column=1, sticky="w", padx=(10, 0), pady=(14, 3))
-        self.make_hint(form, "秒").grid(row=4, column=1, sticky="w", padx=(82, 0), pady=(14, 3))
+        self.make_hint(form, "seconds").grid(row=4, column=1, sticky="w", padx=(82, 0), pady=(14, 3))
 
-        self.make_label(form, "同步选项").grid(row=5, column=0, sticky="w", pady=(12, 0))
+        self.make_label(form, "options").grid(row=5, column=0, sticky="w", pady=(12, 0))
         option_row = tk.Frame(form, bg=CARD_COLOR)
         option_row.grid(row=5, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(12, 0))
-        tk.Checkbutton(
+        clean_check = tk.Checkbutton(
             option_row,
-            text="清理目标多余文件",
+            text=self.t("clean_extra"),
             variable=self.delete_extra_var,
             bg=CARD_COLOR,
             fg=TEXT_COLOR,
             activebackground=CARD_COLOR,
             font=(UI_FONT, 10),
-        ).pack(side="left")
-        tk.Checkbutton(
+        )
+        clean_check.pack(side="left")
+        self.register_i18n(clean_check, "clean_extra")
+        startup_check = tk.Checkbutton(
             option_row,
-            text="开机启动并启用同步",
+            text=self.t("startup"),
             variable=self.startup_var,
             bg=CARD_COLOR,
             fg=TEXT_COLOR,
             activebackground=CARD_COLOR,
             font=(UI_FONT, 10),
-        ).pack(side="left", padx=(22, 0))
-        self.make_hint(form, "保留内容会保留，并且不会覆盖").grid(
+        )
+        startup_check.pack(side="left", padx=(22, 0))
+        self.register_i18n(startup_check, "startup")
+        self.make_hint(form, "keep_hint").grid(
             row=6,
             column=1,
             columnspan=2,
@@ -795,23 +935,27 @@ class MirrorTrayApp:
             pady=(2, 0),
         )
 
-    def make_label(self, parent: tk.Misc, text: str) -> tk.Label:
-        return tk.Label(
+    def make_label(self, parent: tk.Misc, text_key: str) -> tk.Label:
+        label = tk.Label(
             parent,
-            text=text,
+            text=self.t(text_key),
             bg=CARD_COLOR,
             fg=TEXT_COLOR,
             font=(UI_FONT, 10, "bold"),
         )
+        self.register_i18n(label, text_key)
+        return label
 
-    def make_hint(self, parent: tk.Misc, text: str) -> tk.Label:
-        return tk.Label(
+    def make_hint(self, parent: tk.Misc, text_key: str) -> tk.Label:
+        label = tk.Label(
             parent,
-            text=text,
+            text=self.t(text_key),
             bg=CARD_COLOR,
             fg="#475467",
             font=(UI_FONT, 9),
         )
+        self.register_i18n(label, text_key)
+        return label
 
     def make_entry(self, parent: tk.Misc, variable: tk.StringVar) -> tk.Entry:
         return tk.Entry(
@@ -907,11 +1051,11 @@ class MirrorTrayApp:
             return
         menu = tk.Menu(self.root, tearoff=False)
         menu.add_command(
-            label="选择文件",
+            label=self.t("select_file"),
             command=lambda: self.add_selected_files(box, root_getter),
         )
         menu.add_command(
-            label="选择文件夹",
+            label=self.t("select_folder"),
             command=lambda: self.add_selected_folder_from_root(box, root_getter),
         )
         try:

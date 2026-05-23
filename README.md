@@ -6,10 +6,13 @@ Version: `1.0.0`
 
 [中文介绍](docs/README.zh-CN.md)
 
+![English interface](docs/images/english-interface.png)
+
 ## Features
 
 - One-way source-to-target synchronization.
 - Source and target folder selection in the app.
+- Language switch between Chinese and English.
 - Include rules for syncing only selected files or folders.
 - Source exclusion rules for content that should not be copied.
 - Target protected content that will not be deleted or overwritten.
@@ -21,18 +24,27 @@ Version: `1.0.0`
 
 ## Usage
 
-Download the package for your platform from the release page.
+Download the installer for your platform from the release page.
 
-Windows users can run:
+Windows users can install with:
 
 ```text
-FolderSyncMirror.exe
+FolderSyncMirror_1.0.0_x64-setup.exe
 ```
 
-macOS users can open:
+Windows also provides `FolderSyncMirror.exe` as a portable option.
+
+macOS users can install with:
 
 ```text
-FolderSyncMirror.app
+FolderSyncMirror_1.0.0_x64.dmg
+```
+
+Linux users can install the DEB or RPM package:
+
+```text
+FolderSyncMirror_1.0.0_amd64.deb
+FolderSyncMirror_1.0.0_x86_64.rpm
 ```
 
 Synchronization is disabled by default. Select a source folder and target folder, adjust the rules if needed, then click `Start Sync`. After synchronization starts, the same button becomes `Pause Sync`.

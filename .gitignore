@@ -7,8 +7,7 @@ build-onefile/
 build-mac/
 build-linux/
 dist/
+dist-onefile/
 dist-mac/
 dist-linux/
 *.spec
-dist-onefile/config.json
-dist-onefile/sync.log

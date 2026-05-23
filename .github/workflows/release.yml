@@ -16,45 +16,14 @@ on:
 permissions:
   contents: write
 
-jobs:
-  build:
-    name: Build ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: windows-x64
-            os: windows-latest
-            artifact: FolderSyncMirror-windows-x64
-            add_data: "config.example.json;."
-            dist: dist-windows
-            work: build-windows
-            onefile: "--onefile"
-            package: Compress-Archive -Path dist-windows\FolderSyncMirror.exe -DestinationPath FolderSyncMirror-windows-x64.zip -Force
-            asset: FolderSyncMirror-windows-x64.zip
-            exe_asset: dist-windows\FolderSyncMirror.exe
-          - name: macos
-            os: macos-latest
-            artifact: FolderSyncMirror-macos
-            add_data: "config.example.json:."
-            dist: dist-macos
-            work: build-macos
-            onefile: ""
-            package: ditto -c -k --sequesterRsrc --keepParent dist-macos/FolderSyncMirror.app FolderSyncMirror-macos.zip
-            asset: FolderSyncMirror-macos.zip
-            exe_asset: ""
-          - name: linux-x64
-            os: ubuntu-latest
-            artifact: FolderSyncMirror-linux-x64
-            add_data: "config.example.json:."
-            dist: dist-linux
-            work: build-linux
-            onefile: "--onefile"
-            package: zip -j FolderSyncMirror-linux-x64.zip dist-linux/FolderSyncMirror
-            asset: FolderSyncMirror-linux-x64.zip
-            exe_asset: ""
+env:
+  APP_NAME: FolderSyncMirror
+  APP_VERSION: 1.0.0
 
+jobs:
+  windows:
+    name: Build Windows installer
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,48 +33,248 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Linux tray dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-tk libayatana-appindicator3-dev zip
-
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Build app
+      - name: Build executable
         run: >
           python -m PyInstaller
           --noconfirm
           --clean
           --windowed
-          ${{ matrix.onefile }}
-          --name FolderSyncMirror
-          --distpath "${{ matrix.dist }}"
-          --workpath "${{ matrix.work }}"
-          --add-data "${{ matrix.add_data }}"
+          --onefile
+          --name "${{ env.APP_NAME }}"
+          --distpath dist-windows
+          --workpath build-windows
+          --add-data "config.example.json;."
           tray_app.py
 
-      - name: Package
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build setup installer
         shell: pwsh
-        run: ${{ matrix.package }}
+        run: |
+          $iss = @"
+          #define MyAppName "Folder Sync Mirror"
+          #define MyAppVersion "${{ env.APP_VERSION }}"
+          #define MyAppPublisher "Fusheng"
+          #define MyAppExeName "FolderSyncMirror.exe"
+
+          [Setup]
+          AppId={{B4C71ED4-91B4-45AE-8749-F6B6567A5A0B}
+          AppName={#MyAppName}
+          AppVersion={#MyAppVersion}
+          AppPublisher={#MyAppPublisher}
+          DefaultDirName={autopf}\Folder Sync Mirror
+          DefaultGroupName=Folder Sync Mirror
+          DisableProgramGroupPage=yes
+          OutputDir=.
+          OutputBaseFilename=FolderSyncMirror_${{ env.APP_VERSION }}_x64-setup
+          Compression=lzma
+          SolidCompression=yes
+          WizardStyle=modern
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+
+          [Languages]
+          Name: "english"; MessagesFile: "compiler:Default.isl"
+
+          [Tasks]
+          Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+          [Files]
+          Source: "dist-windows\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+
+          [Icons]
+          Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+          Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+          [Run]
+          Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+          "@
+          $iss | Set-Content -Path installer.iss -Encoding UTF8
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FolderSyncMirror-windows-x64
+          path: |
+            FolderSyncMirror_${{ env.APP_VERSION }}_x64-setup.exe
+            dist-windows/FolderSyncMirror.exe
+
+      - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          files: |
+            FolderSyncMirror_${{ env.APP_VERSION }}_x64-setup.exe
+            dist-windows/FolderSyncMirror.exe
+
+  macos:
+    name: Build macOS DMG
+    runs-on: macos-13
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Build app bundle
+        run: >
+          python -m PyInstaller
+          --noconfirm
+          --clean
+          --windowed
+          --name "${{ env.APP_NAME }}"
+          --distpath dist-macos
+          --workpath build-macos
+          --add-data "config.example.json:."
+          tray_app.py
+
+      - name: Build DMG
+        run: |
+          hdiutil create \
+            -volname "Folder Sync Mirror" \
+            -srcfolder "dist-macos/FolderSyncMirror.app" \
+            -ov \
+            -format UDZO \
+            "FolderSyncMirror_${APP_VERSION}_x64.dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.asset }}
+          name: FolderSyncMirror-macos-x64
+          path: FolderSyncMirror_${{ env.APP_VERSION }}_x64.dmg
 
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
-          files: ${{ matrix.asset }}
+          files: FolderSyncMirror_${{ env.APP_VERSION }}_x64.dmg
 
-      - name: Upload Windows exe release asset
-        if: matrix.exe_asset != '' && (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch')
+  linux:
+    name: Build Linux packages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk libayatana-appindicator3-dev rpm
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Build executable
+        run: >
+          python -m PyInstaller
+          --noconfirm
+          --clean
+          --windowed
+          --onefile
+          --name "${{ env.APP_NAME }}"
+          --distpath dist-linux
+          --workpath build-linux
+          --add-data "config.example.json:."
+          tray_app.py
+
+      - name: Build DEB
+        run: |
+          mkdir -p pkg-deb/DEBIAN
+          mkdir -p pkg-deb/opt/folder-sync-mirror
+          mkdir -p pkg-deb/usr/share/applications
+          install -m 755 dist-linux/FolderSyncMirror pkg-deb/opt/folder-sync-mirror/FolderSyncMirror
+          cat > pkg-deb/DEBIAN/control <<EOF
+          Package: foldersyncmirror
+          Version: ${APP_VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Fusheng <wzxmer@outlook.com>
+          Description: One-way desktop folder mirroring utility.
+          EOF
+          cat > pkg-deb/usr/share/applications/foldersyncmirror.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=Folder Sync Mirror
+          Exec=/opt/folder-sync-mirror/FolderSyncMirror
+          Terminal=false
+          Categories=Utility;
+          EOF
+          dpkg-deb --build pkg-deb "FolderSyncMirror_${APP_VERSION}_amd64.deb"
+
+      - name: Build RPM
+        run: |
+          mkdir -p rpmroot/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+          mkdir -p rpm-src/opt/folder-sync-mirror
+          mkdir -p rpm-src/usr/share/applications
+          install -m 755 dist-linux/FolderSyncMirror rpm-src/opt/folder-sync-mirror/FolderSyncMirror
+          cat > rpm-src/usr/share/applications/foldersyncmirror.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=Folder Sync Mirror
+          Exec=/opt/folder-sync-mirror/FolderSyncMirror
+          Terminal=false
+          Categories=Utility;
+          EOF
+          tar -czf rpmroot/SOURCES/foldersyncmirror-${APP_VERSION}.tar.gz -C rpm-src .
+          cat > rpmroot/SPECS/foldersyncmirror.spec <<EOF
+          Name: foldersyncmirror
+          Version: ${APP_VERSION}
+          Release: 1%{?dist}
+          Summary: One-way desktop folder mirroring utility
+          License: MIT
+          BuildArch: x86_64
+          Source0: foldersyncmirror-${APP_VERSION}.tar.gz
+
+          %description
+          Folder Sync Mirror is a desktop utility for one-way folder mirroring.
+
+          %prep
+          mkdir -p %{_builddir}/foldersyncmirror-${APP_VERSION}
+          tar -xzf %{SOURCE0} -C %{_builddir}/foldersyncmirror-${APP_VERSION}
+
+          %install
+          mkdir -p %{buildroot}
+          cp -a %{_builddir}/foldersyncmirror-${APP_VERSION}/* %{buildroot}/
+
+          %files
+          /opt/folder-sync-mirror/FolderSyncMirror
+          /usr/share/applications/foldersyncmirror.desktop
+          EOF
+          rpmbuild --define "_topdir $(pwd)/rpmroot" -bb rpmroot/SPECS/foldersyncmirror.spec
+          cp rpmroot/RPMS/x86_64/foldersyncmirror-${APP_VERSION}-1*.rpm "FolderSyncMirror_${APP_VERSION}_x86_64.rpm"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FolderSyncMirror-linux-x64
+          path: |
+            FolderSyncMirror_${{ env.APP_VERSION }}_amd64.deb
+            FolderSyncMirror_${{ env.APP_VERSION }}_x86_64.rpm
+
+      - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
-          files: ${{ matrix.exe_asset }}
+          files: |
+            FolderSyncMirror_${{ env.APP_VERSION }}_amd64.deb
+            FolderSyncMirror_${{ env.APP_VERSION }}_x86_64.rpm
