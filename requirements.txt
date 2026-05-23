@@ -1,0 +1,4 @@
+pystray==0.19.5
+pillow==12.2.0
+pyinstaller==6.19.0
+watchdog==6.0.0
