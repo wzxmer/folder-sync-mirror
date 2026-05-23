@@ -7,6 +7,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to upload assets to"
+        required: false
+        default: "v1.0.0"
 
 permissions:
   contents: write
@@ -22,21 +27,33 @@ jobs:
           - name: windows-x64
             os: windows-latest
             artifact: FolderSyncMirror-windows-x64
-            build: .\build_exe.ps1
-            package: Compress-Archive -Path dist-onefile\FolderSyncMirror.exe -DestinationPath FolderSyncMirror-windows-x64.zip -Force
+            add_data: "config.example.json;."
+            dist: dist-windows
+            work: build-windows
+            onefile: "--onefile"
+            package: Compress-Archive -Path dist-windows\FolderSyncMirror.exe -DestinationPath FolderSyncMirror-windows-x64.zip -Force
             asset: FolderSyncMirror-windows-x64.zip
-          - name: macos-universal
+            exe_asset: dist-windows\FolderSyncMirror.exe
+          - name: macos
             os: macos-latest
             artifact: FolderSyncMirror-macos
-            build: bash build_mac.sh
-            package: bash -lc "ditto -c -k --sequesterRsrc --keepParent dist-mac/FolderSyncMirror.app FolderSyncMirror-macos.zip"
+            add_data: "config.example.json:."
+            dist: dist-macos
+            work: build-macos
+            onefile: ""
+            package: ditto -c -k --sequesterRsrc --keepParent dist-macos/FolderSyncMirror.app FolderSyncMirror-macos.zip
             asset: FolderSyncMirror-macos.zip
+            exe_asset: ""
           - name: linux-x64
             os: ubuntu-latest
             artifact: FolderSyncMirror-linux-x64
-            build: bash build_linux.sh
-            package: bash -lc "zip -j FolderSyncMirror-linux-x64.zip dist-linux/FolderSyncMirror"
+            add_data: "config.example.json:."
+            dist: dist-linux
+            work: build-linux
+            onefile: "--onefile"
+            package: zip -j FolderSyncMirror-linux-x64.zip dist-linux/FolderSyncMirror
             asset: FolderSyncMirror-linux-x64.zip
+            exe_asset: ""
 
     steps:
       - name: Checkout
@@ -53,9 +70,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-tk libayatana-appindicator3-dev zip
 
-      - name: Build
-        shell: pwsh
-        run: ${{ matrix.build }}
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Build app
+        run: >
+          python -m PyInstaller
+          --noconfirm
+          --clean
+          --windowed
+          ${{ matrix.onefile }}
+          --name FolderSyncMirror
+          --distpath "${{ matrix.dist }}"
+          --workpath "${{ matrix.work }}"
+          --add-data "${{ matrix.add_data }}"
+          tray_app.py
 
       - name: Package
         shell: pwsh
@@ -68,7 +97,15 @@ jobs:
           path: ${{ matrix.asset }}
 
       - name: Upload release asset
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
           files: ${{ matrix.asset }}
+
+      - name: Upload Windows exe release asset
+        if: matrix.exe_asset != '' && (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          files: ${{ matrix.exe_asset }}
