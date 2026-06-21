@@ -421,9 +421,7 @@ def files_differ(source_file: Path, target_file: Path) -> bool:
     if source_stat.st_size != target_stat.st_size:
         return True
 
-    source_mtime = int(source_stat.st_mtime)
-    target_mtime = int(target_stat.st_mtime)
-    if source_mtime == target_mtime:
+    if source_stat.st_mtime_ns == target_stat.st_mtime_ns:
         return False
 
     return file_digest(source_file) != file_digest(target_file)

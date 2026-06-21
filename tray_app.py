@@ -1850,7 +1850,7 @@ class MirrorTrayApp:
         config.target.mkdir(parents=True, exist_ok=True)
         self.set_status("正在同步")
         with self.operation_lock:
-            stats = sync_once(self.sync_config_with_zzc_protected(config), logger=self.log)
+            stats = sync_once(config, logger=self.log)
         if stats.has_changes():
             self.log(
                 f"同步完成 copied={stats.copied} "
@@ -1859,22 +1859,6 @@ class MirrorTrayApp:
         self.set_status("同步完成")
         if self.root:
                 self.root.after(1500, lambda: self.set_status("监听中") if self.started and not self.paused else None)
-
-    def sync_config_with_zzc_protected(self, config: SyncConfig) -> SyncConfig:
-        protects = list(config.target_protect)
-        for pattern in ("*.zzc.dict.yaml",):
-            if pattern not in protects:
-                protects.append(pattern)
-        return SyncConfig(
-            source=config.source,
-            target=config.target,
-            include=config.include,
-            exclude=config.exclude,
-            target_protect=tuple(protects),
-            interval_seconds=config.interval_seconds,
-            delete_extra=config.delete_extra,
-            scheduled_tasks=config.scheduled_tasks,
-        )
 
     def zzc_files_stable(self, config: SyncConfig) -> bool:
         scheme = find_scheme(config.source)
@@ -2090,7 +2074,7 @@ class MirrorTrayApp:
             save_config(CONFIG_PATH, config)
             self.set_status("正在同步")
             with self.operation_lock:
-                stats = sync_once(self.sync_config_with_zzc_protected(config), logger=self.log)
+                stats = sync_once(config, logger=self.log)
             self.set_status("同步完成")
             if self.root:
                 next_status = "监听中" if self.started and not self.paused else self.base_status
