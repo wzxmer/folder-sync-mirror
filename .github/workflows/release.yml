@@ -17,7 +17,7 @@ permissions:
   contents: write
 
 env:
-  APP_NAME: FolderSyncMirror
+  APP_NAME: txjxSyncAssistant
   APP_VERSION: 1.0.0
 
 jobs:
@@ -56,21 +56,21 @@ jobs:
         shell: pwsh
         run: |
           $iss = @"
-          #define MyAppName "Folder Sync Mirror"
+          #define MyAppName "txjx同步助手"
           #define MyAppVersion "${{ env.APP_VERSION }}"
           #define MyAppPublisher "Fusheng"
-          #define MyAppExeName "FolderSyncMirror.exe"
+          #define MyAppExeName "txjxSyncAssistant.exe"
 
           [Setup]
           AppId={{B4C71ED4-91B4-45AE-8749-F6B6567A5A0B}
           AppName={#MyAppName}
           AppVersion={#MyAppVersion}
           AppPublisher={#MyAppPublisher}
-          DefaultDirName={autopf}\Folder Sync Mirror
-          DefaultGroupName=Folder Sync Mirror
+          DefaultDirName={autopf}\txjx Sync Assistant
+          DefaultGroupName=txjx Sync Assistant
           DisableProgramGroupPage=yes
           OutputDir=.
-          OutputBaseFilename=FolderSyncMirror_${{ env.APP_VERSION }}_x64-setup
+          OutputBaseFilename=txjxSyncAssistant_${{ env.APP_VERSION }}_x64-setup
           Compression=lzma
           SolidCompression=yes
           WizardStyle=modern
@@ -99,10 +99,10 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: FolderSyncMirror-windows-x64
+          name: txjxSyncAssistant-windows-x64
           path: |
-            FolderSyncMirror_${{ env.APP_VERSION }}_x64-setup.exe
-            dist-windows/FolderSyncMirror.exe
+            txjxSyncAssistant_${{ env.APP_VERSION }}_x64-setup.exe
+            dist-windows/txjxSyncAssistant.exe
 
   macos:
     name: Build macOS DMG
@@ -134,17 +134,17 @@ jobs:
       - name: Build DMG
         run: |
           hdiutil create \
-            -volname "Folder Sync Mirror" \
-            -srcfolder "dist-macos/FolderSyncMirror.app" \
+            -volname "txjx同步助手" \
+            -srcfolder "dist-macos/txjxSyncAssistant.app" \
             -ov \
             -format UDZO \
-            "FolderSyncMirror_${APP_VERSION}_x64.dmg"
+            "txjxSyncAssistant_${APP_VERSION}_x64.dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FolderSyncMirror-macos-x64
-          path: FolderSyncMirror_${{ env.APP_VERSION }}_x64.dmg
+          name: txjxSyncAssistant-macos-x64
+          path: txjxSyncAssistant_${{ env.APP_VERSION }}_x64.dmg
 
   linux:
     name: Build Linux packages
@@ -182,77 +182,77 @@ jobs:
       - name: Build DEB
         run: |
           mkdir -p pkg-deb/DEBIAN
-          mkdir -p pkg-deb/opt/folder-sync-mirror
+          mkdir -p pkg-deb/opt/txjx-sync-assistant
           mkdir -p pkg-deb/usr/share/applications
-          install -m 755 dist-linux/FolderSyncMirror pkg-deb/opt/folder-sync-mirror/FolderSyncMirror
+          install -m 755 dist-linux/txjxSyncAssistant pkg-deb/opt/txjx-sync-assistant/txjxSyncAssistant
           cat > pkg-deb/DEBIAN/control <<EOF
-          Package: foldersyncmirror
+          Package: txjx-sync-assistant
           Version: ${APP_VERSION}
           Section: utils
           Priority: optional
           Architecture: amd64
           Maintainer: Fusheng <wzxmer@outlook.com>
-          Description: One-way desktop folder mirroring utility.
+          Description: txjx folder sync and zzc merge assistant.
           EOF
-          cat > pkg-deb/usr/share/applications/foldersyncmirror.desktop <<EOF
+          cat > pkg-deb/usr/share/applications/txjx-sync-assistant.desktop <<EOF
           [Desktop Entry]
           Type=Application
-          Name=Folder Sync Mirror
-          Exec=/opt/folder-sync-mirror/FolderSyncMirror
+          Name=txjx同步助手
+          Exec=/opt/txjx-sync-assistant/txjxSyncAssistant
           Terminal=false
           Categories=Utility;
           EOF
-          dpkg-deb --build pkg-deb "FolderSyncMirror_${APP_VERSION}_amd64.deb"
+          dpkg-deb --build pkg-deb "txjxSyncAssistant_${APP_VERSION}_amd64.deb"
 
       - name: Build RPM
         run: |
           mkdir -p rpmroot/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          mkdir -p rpm-src/opt/folder-sync-mirror
+          mkdir -p rpm-src/opt/txjx-sync-assistant
           mkdir -p rpm-src/usr/share/applications
-          install -m 755 dist-linux/FolderSyncMirror rpm-src/opt/folder-sync-mirror/FolderSyncMirror
-          cat > rpm-src/usr/share/applications/foldersyncmirror.desktop <<EOF
+          install -m 755 dist-linux/txjxSyncAssistant rpm-src/opt/txjx-sync-assistant/txjxSyncAssistant
+          cat > rpm-src/usr/share/applications/txjx-sync-assistant.desktop <<EOF
           [Desktop Entry]
           Type=Application
-          Name=Folder Sync Mirror
-          Exec=/opt/folder-sync-mirror/FolderSyncMirror
+          Name=txjx同步助手
+          Exec=/opt/txjx-sync-assistant/txjxSyncAssistant
           Terminal=false
           Categories=Utility;
           EOF
-          tar -czf rpmroot/SOURCES/foldersyncmirror-${APP_VERSION}.tar.gz -C rpm-src .
-          cat > rpmroot/SPECS/foldersyncmirror.spec <<EOF
-          Name: foldersyncmirror
+          tar -czf rpmroot/SOURCES/txjx-sync-assistant-${APP_VERSION}.tar.gz -C rpm-src .
+          cat > rpmroot/SPECS/txjx-sync-assistant.spec <<EOF
+          Name: txjx-sync-assistant
           Version: ${APP_VERSION}
           Release: 1%{?dist}
           Summary: One-way desktop folder mirroring utility
           License: MIT
           BuildArch: x86_64
-          Source0: foldersyncmirror-${APP_VERSION}.tar.gz
+          Source0: txjx-sync-assistant-${APP_VERSION}.tar.gz
 
           %description
-          Folder Sync Mirror is a desktop utility for one-way folder mirroring.
+          txjx Sync Assistant is a desktop utility for folder mirroring and zzc merge.
 
           %prep
-          mkdir -p %{_builddir}/foldersyncmirror-${APP_VERSION}
-          tar -xzf %{SOURCE0} -C %{_builddir}/foldersyncmirror-${APP_VERSION}
+          mkdir -p %{_builddir}/txjx-sync-assistant-${APP_VERSION}
+          tar -xzf %{SOURCE0} -C %{_builddir}/txjx-sync-assistant-${APP_VERSION}
 
           %install
           mkdir -p %{buildroot}
-          cp -a %{_builddir}/foldersyncmirror-${APP_VERSION}/* %{buildroot}/
+          cp -a %{_builddir}/txjx-sync-assistant-${APP_VERSION}/* %{buildroot}/
 
           %files
-          /opt/folder-sync-mirror/FolderSyncMirror
-          /usr/share/applications/foldersyncmirror.desktop
+          /opt/txjx-sync-assistant/txjxSyncAssistant
+          /usr/share/applications/txjx-sync-assistant.desktop
           EOF
-          rpmbuild --define "_topdir $(pwd)/rpmroot" -bb rpmroot/SPECS/foldersyncmirror.spec
-          cp rpmroot/RPMS/x86_64/foldersyncmirror-${APP_VERSION}-1*.rpm "FolderSyncMirror_${APP_VERSION}_x86_64.rpm"
+          rpmbuild --define "_topdir $(pwd)/rpmroot" -bb rpmroot/SPECS/txjx-sync-assistant.spec
+          cp rpmroot/RPMS/x86_64/txjx-sync-assistant-${APP_VERSION}-1*.rpm "txjxSyncAssistant_${APP_VERSION}_x86_64.rpm"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: FolderSyncMirror-linux-x64
+          name: txjxSyncAssistant-linux-x64
           path: |
-            FolderSyncMirror_${{ env.APP_VERSION }}_amd64.deb
-            FolderSyncMirror_${{ env.APP_VERSION }}_x86_64.rpm
+            txjxSyncAssistant_${{ env.APP_VERSION }}_amd64.deb
+            txjxSyncAssistant_${{ env.APP_VERSION }}_x86_64.rpm
 
   publish:
     name: Publish release assets
@@ -276,8 +276,8 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
           files: |
-            release-assets/FolderSyncMirror-windows-x64/FolderSyncMirror_${{ env.APP_VERSION }}_x64-setup.exe
-            release-assets/FolderSyncMirror-windows-x64/FolderSyncMirror.exe
-            release-assets/FolderSyncMirror-macos-x64/FolderSyncMirror_${{ env.APP_VERSION }}_x64.dmg
-            release-assets/FolderSyncMirror-linux-x64/FolderSyncMirror_${{ env.APP_VERSION }}_amd64.deb
-            release-assets/FolderSyncMirror-linux-x64/FolderSyncMirror_${{ env.APP_VERSION }}_x86_64.rpm
+            release-assets/txjxSyncAssistant-windows-x64/txjxSyncAssistant_${{ env.APP_VERSION }}_x64-setup.exe
+            release-assets/txjxSyncAssistant-windows-x64/txjxSyncAssistant.exe
+            release-assets/txjxSyncAssistant-macos-x64/txjxSyncAssistant_${{ env.APP_VERSION }}_x64.dmg
+            release-assets/txjxSyncAssistant-linux-x64/txjxSyncAssistant_${{ env.APP_VERSION }}_amd64.deb
+            release-assets/txjxSyncAssistant-linux-x64/txjxSyncAssistant_${{ env.APP_VERSION }}_x86_64.rpm

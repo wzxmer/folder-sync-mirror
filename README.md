@@ -1,6 +1,6 @@
-# Folder Sync Mirror
+# txjx同步助手
 
-Folder Sync Mirror is a desktop tray app for one-way folder mirroring. It watches a source folder, copies selected content into a target folder, and can remove extra target files so the target stays consistent with the selected source content.
+txjx同步助手 is a desktop tray app for txjx folder synchronization and zzc merge. It watches a source folder, copies selected content into a target folder, and can remove extra target files so the target stays consistent with the selected source content.
 
 Version: `1.0.0`
 
@@ -29,22 +29,22 @@ Download the installer for your platform from the release page.
 Windows users can install with:
 
 ```text
-FolderSyncMirror_1.0.0_x64-setup.exe
+txjxSyncAssistant_1.0.0_x64-setup.exe
 ```
 
-Windows also provides `FolderSyncMirror.exe` as a portable option.
+Windows also provides `txjxSyncAssistant.exe` as a portable option.
 
 macOS users can install with:
 
 ```text
-FolderSyncMirror_1.0.0_x64.dmg
+txjxSyncAssistant_1.0.0_x64.dmg
 ```
 
 Linux users can install the DEB or RPM package:
 
 ```text
-FolderSyncMirror_1.0.0_amd64.deb
-FolderSyncMirror_1.0.0_x86_64.rpm
+txjxSyncAssistant_1.0.0_amd64.deb
+txjxSyncAssistant_1.0.0_x86_64.rpm
 ```
 
 Synchronization is disabled by default. Select a source folder and target folder, adjust the rules if needed, then click `Start Sync`. After synchronization starts, the same button becomes `Pause Sync`.

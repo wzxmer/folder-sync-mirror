@@ -48,9 +48,44 @@ DEFAULT_CONFIG_TEXT = """{
   "interval_seconds": 0,
 
   // 是否删除目标中多出的文件，让目标与来源中被选择同步的内容一致。
-  "delete_extra": true
+  "delete_extra": true,
+
+  // 定时任务。
+  "scheduled_tasks": {
+    // 定时合并天行键自造词。来源文件夹应为 iCloud 方案目录，目标文件夹应为本机 RimeData。
+    "auto_merge_zzc": false,
+
+    // 合并写入哪些正式码表，路径相对来源文件夹。留空时自动使用 <方案>.dict.yaml。
+    "zzc_target_dicts": [],
+
+    // 自动合并自造词的最小间隔，单位分钟。
+    "zzc_merge_interval_minutes": 30,
+
+    // 开机启动后是否自动执行一次合并。
+    "startup_auto_merge": false,
+
+    // 开机后等待多少分钟再执行第一次自动合并，用来等待 iCloud 同步稳定。
+    "startup_delay_minutes": 10,
+
+    // 合并后是否自动重新部署。
+    "auto_deploy_after_merge": false,
+
+    // 重新部署命令。留空时程序会尝试自动查找小狼毫部署程序。
+    "deploy_command": ""
+  }
 }
 """
+
+
+@dataclass(frozen=True)
+class ScheduledTasksConfig:
+    auto_merge_zzc: bool
+    zzc_target_dicts: tuple[str, ...]
+    zzc_merge_interval_minutes: float
+    startup_auto_merge: bool
+    startup_delay_minutes: float
+    auto_deploy_after_merge: bool
+    deploy_command: str
 
 
 @dataclass(frozen=True)
@@ -62,6 +97,7 @@ class SyncConfig:
     target_protect: tuple[str, ...]
     interval_seconds: float
     delete_extra: bool
+    scheduled_tasks: ScheduledTasksConfig
 
 
 @dataclass
@@ -108,6 +144,18 @@ def load_config(config_path: Path) -> SyncConfig:
     target_protect = normalize_patterns(data.get("target_protect", []))
     interval_seconds = float(data.get("interval_seconds", DEFAULT_INTERVAL_SECONDS))
     delete_extra = bool(data.get("delete_extra", True))
+    scheduled_data = data.get("scheduled_tasks", {})
+    if not isinstance(scheduled_data, dict):
+        scheduled_data = {}
+    scheduled_tasks = ScheduledTasksConfig(
+        auto_merge_zzc=bool(scheduled_data.get("auto_merge_zzc", False)),
+        zzc_target_dicts=normalize_patterns(scheduled_data.get("zzc_target_dicts", [])),
+        zzc_merge_interval_minutes=float(scheduled_data.get("zzc_merge_interval_minutes", 30)),
+        startup_auto_merge=bool(scheduled_data.get("startup_auto_merge", False)),
+        startup_delay_minutes=float(scheduled_data.get("startup_delay_minutes", 10)),
+        auto_deploy_after_merge=bool(scheduled_data.get("auto_deploy_after_merge", False)),
+        deploy_command=str(scheduled_data.get("deploy_command", "")).strip(),
+    )
 
     return SyncConfig(
         source=source.resolve() if source_text else source,
@@ -117,6 +165,7 @@ def load_config(config_path: Path) -> SyncConfig:
         target_protect=target_protect,
         interval_seconds=interval_seconds,
         delete_extra=delete_extra,
+        scheduled_tasks=scheduled_tasks,
     )
 
 
@@ -154,6 +203,11 @@ def format_config_text(config: SyncConfig) -> str:
     exclude_text = format_pattern_list(config.exclude)
     target_protect_text = format_pattern_list(config.target_protect)
     delete_extra = "true" if config.delete_extra else "false"
+    auto_merge_zzc = "true" if config.scheduled_tasks.auto_merge_zzc else "false"
+    zzc_target_dicts = format_pattern_list(config.scheduled_tasks.zzc_target_dicts)
+    startup_auto_merge = "true" if config.scheduled_tasks.startup_auto_merge else "false"
+    auto_deploy_after_merge = "true" if config.scheduled_tasks.auto_deploy_after_merge else "false"
+    deploy_command = json.dumps(config.scheduled_tasks.deploy_command, ensure_ascii=False)[1:-1]
     source_text = "" if is_empty_path(config.source) else json_escape_path(config.source)
     target_text = "" if is_empty_path(config.target) else json_escape_path(config.target)
     return f"""{{
@@ -180,7 +234,31 @@ def format_config_text(config: SyncConfig) -> str:
   "interval_seconds": {config.interval_seconds:g},
 
   // 是否删除目标中多出的文件，让目标与来源中被选择同步的内容一致。
-  "delete_extra": {delete_extra}
+  "delete_extra": {delete_extra},
+
+  // 定时任务。
+  "scheduled_tasks": {{
+    // 定时合并天行键自造词。来源文件夹应为 iCloud 方案目录，目标文件夹应为本机 RimeData。
+    "auto_merge_zzc": {auto_merge_zzc},
+
+    // 合并写入哪些正式码表，路径相对来源文件夹。留空时自动使用 <方案>.dict.yaml。
+    "zzc_target_dicts": {zzc_target_dicts},
+
+    // 自动合并自造词的最小间隔，单位分钟。
+    "zzc_merge_interval_minutes": {config.scheduled_tasks.zzc_merge_interval_minutes:g},
+
+    // 开机启动后是否自动执行一次合并。
+    "startup_auto_merge": {startup_auto_merge},
+
+    // 开机后等待多少分钟再执行第一次自动合并，用来等待 iCloud 同步稳定。
+    "startup_delay_minutes": {config.scheduled_tasks.startup_delay_minutes:g},
+
+    // 合并后是否自动重新部署。
+    "auto_deploy_after_merge": {auto_deploy_after_merge},
+
+    // 重新部署命令。留空时程序会尝试自动查找小狼毫部署程序。
+    "deploy_command": "{deploy_command}"
+  }}
 }}
 """
 
@@ -217,6 +295,10 @@ def ensure_safe_config(config: SyncConfig) -> None:
         raise SystemExit("来源文件夹不能放在目标文件夹内部，否则清理目标时有误删风险。")
     if config.interval_seconds < 0:
         raise SystemExit("触发延迟不能小于 0 秒。")
+    if config.scheduled_tasks.zzc_merge_interval_minutes < 0:
+        raise SystemExit("自造词合并间隔不能小于 0 分钟。")
+    if config.scheduled_tasks.startup_delay_minutes < 0:
+        raise SystemExit("开机合并等待时间不能小于 0 分钟。")
 
 
 def is_relative_to(path: Path, parent: Path) -> bool:
@@ -494,7 +576,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"Folder Sync Mirror {__version__}",
+        version=f"txjx sync assistant {__version__}",
     )
     parser.add_argument(
         "-c",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Desktop tray app for Folder Sync Mirror."""
+"""Desktop tray app for txjx sync assistant."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from sync_mirror import (
+    ScheduledTasksConfig,
     SyncConfig,
     create_default_config,
     ensure_safe_config,
@@ -31,6 +32,7 @@ from sync_mirror import (
     sync_once,
 )
 from version import __version__
+from zzc_merge import clear_ops, copy_managed_files, find_scheme, merge_root, reconcile_ops_between_roots
 
 if sys.platform.startswith("win"):
     import winreg
@@ -38,18 +40,18 @@ else:
     winreg = None
 
 
-APP_NAME = "Folder Sync Mirror"
-STARTUP_VALUE_NAME = "FolderSyncMirror"
-MACOS_LAUNCH_AGENT_ID = "com.fusheng.foldersyncmirror"
-WINDOW_WIDTH = 820
-WINDOW_HEIGHT = 860
-BG_COLOR = "#edf2f7"
+APP_NAME = "txjx同步助手"
+STARTUP_VALUE_NAME = "TxjxSyncAssistant"
+MACOS_LAUNCH_AGENT_ID = "com.fusheng.txjxsync"
+WINDOW_WIDTH = 833
+WINDOW_HEIGHT = 846
+BG_COLOR = "#eef3f7"
 CARD_COLOR = "#ffffff"
 TEXT_COLOR = "#1f2a37"
 MUTED_COLOR = "#667085"
-PRIMARY_COLOR = "#2563eb"
-PRIMARY_HOVER = "#1d4ed8"
-BORDER_COLOR = "#d8dee8"
+PRIMARY_COLOR = "#256d85"
+PRIMARY_HOVER = "#1c5870"
+BORDER_COLOR = "#d6dde5"
 BUTTON_BG = "#eef3f8"
 BUTTON_HOVER = "#dde7f2"
 BUTTON_ACTIVE = "#cbd8e6"
@@ -58,6 +60,8 @@ MONO_FONT = "Consolas"
 LOG_MAX_BYTES = 1024 * 1024
 LOG_MAX_LINES = 1000
 LOG_CLEAN_INTERVAL_SECONDS = 24 * 60 * 60
+ZZC_STABLE_SECONDS = 60
+SINGLE_INSTANCE_MUTEX = "Global\\TxjxSyncAssistant"
 
 TRANSLATIONS = {
     "zh": {
@@ -77,11 +81,15 @@ TRANSLATIONS = {
         "clean_extra": "清理目标多余文件",
         "startup": "开机启动并启用同步",
         "keep_hint": "保留内容会保留，并且不会覆盖",
+        "include_rule_hint": "控制来源文件夹中哪些文件/文件夹会上传或同步。\n留空表示同步全部。\n点击编辑会直接覆盖。",
+        "exclude_rule_hint": "控制来源文件夹中哪些文件/文件夹不上传或同步。\n优先级高于同步内容。\n点击编辑会直接覆盖。",
+        "keep_rule_hint": "控制目标文件夹中哪些文件/文件夹必须保留。\n这些内容不会删除，也不会被覆盖。\n点击编辑会直接覆盖。",
         "start": "启动同步",
         "pause": "暂停同步",
         "resume": "继续同步",
         "save": "保存配置",
         "sync_now": "立即同步",
+        "merge_now": "立即合并",
         "sync_once": "立即同步一次",
         "show_window": "显示窗口",
         "open_log": "打开日志",
@@ -91,6 +99,21 @@ TRANSLATIONS = {
         "select_file": "选择文件",
         "select_folder": "选择文件夹",
         "saved": "已保存配置",
+        "scheduled_tasks": "定时任务",
+        "auto_merge_zzc": "自动合并自造词",
+        "zzc_target_dicts": "合并目标码表",
+        "merge_interval": "合并间隔",
+        "merge_unit_minutes": "分钟",
+        "merge_unit_hours": "小时",
+        "merge_unit_days": "天",
+        "minutes": "分钟",
+        "startup_auto_merge": "开机后自动执行合并",
+        "startup_delay": "开机等待",
+        "auto_deploy_after_merge": "合并后自动重新部署",
+        "deploy_command": "部署命令",
+        "deploy_command_hint": "留空时自动查找小狼毫部署程序；不勾选自动部署则无需填写。",
+        "deploy_hint": "留空时自动查找小狼毫部署程序；不勾选则手动重新部署。",
+        "target_dict_hint": "路径相对 iCloud 方案目录；留空默认写入主码表。",
     },
     "en": {
         "language": "Language",
@@ -109,11 +132,15 @@ TRANSLATIONS = {
         "clean_extra": "Clean extra target files",
         "startup": "Start with system and sync",
         "keep_hint": "Kept content will not be deleted or overwritten",
+        "include_rule_hint": "Controls which files/folders in the source folder are uploaded or synced.\nEmpty means sync all.\nEditing overwrites directly.",
+        "exclude_rule_hint": "Controls which files/folders in the source folder are not uploaded or synced.\nTakes priority over sync content.\nEditing overwrites directly.",
+        "keep_rule_hint": "Controls which files/folders in the target folder must be kept.\nThey are not deleted or overwritten.\nEditing overwrites directly.",
         "start": "Start Sync",
         "pause": "Pause Sync",
         "resume": "Resume Sync",
         "save": "Save",
         "sync_now": "Sync Now",
+        "merge_now": "Merge Now",
         "sync_once": "Sync once now",
         "show_window": "Show window",
         "open_log": "Open Log",
@@ -123,6 +150,21 @@ TRANSLATIONS = {
         "select_file": "Select files",
         "select_folder": "Select folder",
         "saved": "Saved",
+        "scheduled_tasks": "Scheduled Tasks",
+        "auto_merge_zzc": "Auto merge zzc",
+        "zzc_target_dicts": "Target Dictionaries",
+        "merge_interval": "Merge Interval",
+        "merge_unit_minutes": "min",
+        "merge_unit_hours": "hour",
+        "merge_unit_days": "day",
+        "minutes": "min",
+        "startup_auto_merge": "Merge after startup",
+        "startup_delay": "Startup Delay",
+        "auto_deploy_after_merge": "Deploy after merge",
+        "deploy_command": "Deploy Command",
+        "deploy_command_hint": "Leave empty to auto-detect Weasel deployer. No need to fill if auto deploy is off.",
+        "deploy_hint": "Leave empty to auto-detect Weasel deployer. Disable to deploy manually.",
+        "target_dict_hint": "Paths relative to iCloud scheme folder. Empty means main dict.",
     },
 }
 
@@ -135,6 +177,8 @@ STATUS_TRANSLATIONS = {
     "检测到变动": "Change Detected",
     "正在同步": "Syncing",
     "同步完成": "Sync Complete",
+    "正在合并": "Merging",
+    "合并完成": "Merge Complete",
     "监听或同步失败": "Sync Failed",
     "已保存配置": "Saved",
 }
@@ -289,12 +333,13 @@ class StatusPill(tk.Canvas):
         min_width: int = 78,
         height: int = 34,
         radius: int = 10,
+        font_size: int = 10,
     ) -> None:
         self.text = text
         self.min_width = min_width
         self.pill_height = height
         self.radius = radius
-        self.font = tkfont.Font(family=UI_FONT, size=10, weight="bold")
+        self.font = tkfont.Font(family=UI_FONT, size=font_size, weight="bold")
         self.bg_fill = "#fee2e2"
         self.text_fill = "#b91c1c"
         width = max(self.min_width, self.font.measure(text) + 24)
@@ -446,7 +491,7 @@ def app_dir() -> Path:
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / APP_NAME
     if sys.platform.startswith("linux"):
-        return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "folder-sync-mirror"
+        return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "txjx-sync-assistant"
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
@@ -455,6 +500,65 @@ def app_dir() -> Path:
 BASE_DIR = app_dir()
 CONFIG_PATH = BASE_DIR / "config.json"
 LOG_PATH = BASE_DIR / "sync.log"
+
+
+class SingleInstanceLock:
+    def __init__(self) -> None:
+        self.handle = None
+        self.lock_file = None
+
+    def acquire(self) -> bool:
+        if sys.platform.startswith("win"):
+            return self.acquire_windows_mutex()
+        return self.acquire_lock_file()
+
+    def acquire_windows_mutex(self) -> bool:
+        try:
+            import ctypes
+            from ctypes import wintypes
+        except Exception:
+            return True
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_mutex = kernel32.CreateMutexW
+        create_mutex.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+        create_mutex.restype = wintypes.HANDLE
+
+        self.handle = create_mutex(None, True, SINGLE_INSTANCE_MUTEX)
+        if not self.handle:
+            return True
+        return ctypes.get_last_error() != 183
+
+    def acquire_lock_file(self) -> bool:
+        try:
+            BASE_DIR.mkdir(parents=True, exist_ok=True)
+            lock_path = BASE_DIR / "app.lock"
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            self.lock_file = fd
+            os.write(fd, str(os.getpid()).encode("ascii"))
+            return True
+        except FileExistsError:
+            return False
+        except OSError:
+            return True
+
+    def release(self) -> None:
+        if sys.platform.startswith("win") and self.handle:
+            try:
+                import ctypes
+
+                ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(self.handle)
+            except Exception:
+                pass
+            self.handle = None
+            return
+        if self.lock_file is not None:
+            try:
+                os.close(self.lock_file)
+                (BASE_DIR / "app.lock").unlink(missing_ok=True)
+            except OSError:
+                pass
+            self.lock_file = None
 
 
 def enable_dpi_awareness() -> None:
@@ -484,6 +588,7 @@ class MirrorTrayApp:
         self.flash_until = 0.0
         self.last_log_cleanup = 0.0
         self.lock = threading.Lock()
+        self.operation_lock = threading.Lock()
         self.root: tk.Tk | None = None
         self.language = "en" if os.environ.get("FOLDER_SYNC_LANG") == "en" else "zh"
         self.language_var: tk.StringVar | None = None
@@ -493,15 +598,32 @@ class MirrorTrayApp:
         self.source_var: tk.StringVar | None = None
         self.target_var: tk.StringVar | None = None
         self.interval_var: tk.StringVar | None = None
+        self.zzc_merge_interval_var: tk.StringVar | None = None
+        self.zzc_merge_unit_var: tk.StringVar | None = None
+        self.startup_delay_var: tk.StringVar | None = None
+        self.deploy_command_var: tk.StringVar | None = None
+        self.deploy_command_entry: tk.Entry | None = None
+        self.entry_placeholder_keys: dict[tk.Entry, str] = {}
+        self.entry_placeholder_active: set[tk.Entry] = set()
         self.delete_extra_var: tk.BooleanVar | None = None
         self.startup_var: tk.BooleanVar | None = None
+        self.auto_merge_zzc_var: tk.BooleanVar | None = None
+        self.startup_auto_merge_var: tk.BooleanVar | None = None
+        self.auto_deploy_after_merge_var: tk.BooleanVar | None = None
         self.include_text: tk.Text | None = None
         self.exclude_text: tk.Text | None = None
         self.target_protect_text: tk.Text | None = None
+        self.zzc_target_dicts_text: tk.Text | None = None
+        self.rule_placeholder_keys: dict[tk.Text, str] = {}
+        self.rule_placeholder_active: set[tk.Text] = set()
         self.pause_button: RoundedButton | None = None
         self.observer: Observer | None = None
         self.observed_source: Path | None = None
+        self.last_zzc_merge_at = 0.0
+        self.startup_sync_started_at = 0.0
+        self.startup_merge_done = False
         self.worker = threading.Thread(target=self.worker_loop, daemon=True)
+        self.task_worker = threading.Thread(target=self.scheduled_task_loop, daemon=True)
         self.icon = pystray.Icon(
             APP_NAME,
             self.make_icon(),
@@ -517,6 +639,7 @@ class MirrorTrayApp:
                 self.toggle_sync,
             ),
             pystray.MenuItem(lambda _: self.t("sync_once"), self.sync_now),
+            pystray.MenuItem(lambda _: self.t("merge_now"), self.merge_now),
             pystray.MenuItem(lambda _: self.t("show_window"), self.show_window, default=True),
             pystray.MenuItem(lambda _: self.t("open_log"), self.open_log),
             pystray.MenuItem(lambda _: self.t("exit"), self.quit),
@@ -612,6 +735,13 @@ class MirrorTrayApp:
                 widget.configure(text=self.t(key))
             except tk.TclError:
                 pass
+        for box in list(self.rule_placeholder_active):
+            box.delete("1.0", "end")
+            box.insert("1.0", self.t(self.rule_placeholder_keys[box]))
+            box.tag_add("placeholder", "1.0", "end")
+        for entry in list(self.entry_placeholder_active):
+            entry.delete(0, "end")
+            entry.insert(0, self.t(self.entry_placeholder_keys[entry]))
         if self.status_var and self.status_label:
             shown = self.display_status(self.status)
             self.status_var.set(shown)
@@ -632,6 +762,7 @@ class MirrorTrayApp:
         ensure_config_exists()
         self.cleanup_log_if_needed(force=True)
         self.worker.start()
+        self.task_worker.start()
         self.icon.run_detached()
         self.create_window()
         if "--background" in sys.argv and self.root:
@@ -643,18 +774,36 @@ class MirrorTrayApp:
         self.root = tk.Tk()
         self.root.title(f"{APP_NAME} {__version__}")
         self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.root.resizable(False, False)
+        self.root.minsize(820, 760)
+        self.root.resizable(True, True)
         self.root.configure(bg=BG_COLOR)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
         self.configure_style()
 
         outer = tk.Frame(self.root, bg=BG_COLOR)
-        outer.pack(fill="both", expand=True, padx=16, pady=16)
+        outer.pack(fill="both", expand=True, padx=18, pady=16)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(1, weight=1)
 
         header = tk.Frame(outer, bg=BG_COLOR)
-        header.pack(fill="x")
-        language_box = tk.Frame(header, bg=BG_COLOR)
-        language_box.pack(side="left", anchor="n")
+        header.grid(row=0, column=0, sticky="ew")
+        status_box = tk.Frame(header, bg=BG_COLOR)
+        status_box.pack(side="left", anchor="n")
+        self.status_var = tk.StringVar(value=self.display_status(self.status))
+        self.status_label = StatusPill(
+            status_box,
+            self.display_status(self.status),
+            min_width=132,
+            height=42,
+            radius=13,
+            font_size=16,
+        )
+        self.status_label.pack(anchor="w")
+        self.update_status_color(self.status)
+        header_tools = tk.Frame(header, bg=BG_COLOR)
+        header_tools.pack(side="right", anchor="ne")
+        language_box = tk.Frame(header_tools, bg=BG_COLOR)
+        language_box.pack(anchor="e")
         language_label = tk.Label(
             language_box,
             text=self.t("language"),
@@ -675,15 +824,20 @@ class MirrorTrayApp:
         )
         language_select.pack(side="left")
         language_select.bind("<<ComboboxSelected>>", self.set_language)
-        self.status_var = tk.StringVar(value=self.display_status(self.status))
-        self.status_label = StatusPill(header, self.display_status(self.status))
-        self.status_label.pack(side="right", anchor="n", pady=(4, 0))
-        self.update_status_color(self.status)
-        self.create_config_form(outer)
 
-        button_panel = RoundedPanel(outer, radius=12, padx=12, pady=10)
-        button_panel.pack(fill="x", pady=(8, 0))
-        button_row = tk.Frame(button_panel.content, bg=CARD_COLOR)
+        content_host = tk.Frame(outer, bg=BG_COLOR)
+        content_host.grid(row=1, column=0, sticky="nsew")
+
+        button_panel = tk.Frame(
+            outer,
+            bg=CARD_COLOR,
+            highlightthickness=1,
+            highlightbackground=BORDER_COLOR,
+            padx=12,
+            pady=10,
+        )
+        button_panel.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        button_row = tk.Frame(button_panel, bg=CARD_COLOR)
         button_row.pack(fill="x")
         self.pause_button = self.make_button(
             button_row, "start", self.toggle_sync, variant="success"
@@ -693,6 +847,9 @@ class MirrorTrayApp:
             button_row, "save", self.save_form_config, variant="primary"
         ).pack(side="left", padx=(8, 0))
         self.make_button(button_row, "sync_now", self.sync_now, variant="info").pack(
+            side="left", padx=(8, 0)
+        )
+        self.make_button(button_row, "merge_now", self.merge_now, variant="success").pack(
             side="left", padx=(8, 0)
         )
         self.make_button(button_row, "open_log", self.open_log).pack(
@@ -722,6 +879,7 @@ class MirrorTrayApp:
         )
         email_label.pack(anchor="e")
         self.register_i18n(email_label, "email")
+        self.create_config_form(content_host)
         self.load_config_into_form()
 
     def configure_style(self) -> None:
@@ -757,6 +915,19 @@ class MirrorTrayApp:
         style.configure("TButton", padding=(9, 4), font=(UI_FONT, 10))
         style.configure("TEntry", padding=(4, 3))
         style.configure("TCheckbutton", background="#ffffff", foreground="#263445")
+        style.configure("TNotebook", background=BG_COLOR, borderwidth=0, padding=0)
+        style.configure(
+            "TNotebook.Tab",
+            padding=(18, 8),
+            font=(UI_FONT, 10, "bold"),
+            background="#e4ebf1",
+            foreground=TEXT_COLOR,
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", CARD_COLOR), ("active", "#f3f7fa")],
+            foreground=[("selected", PRIMARY_COLOR), ("active", TEXT_COLOR)],
+        )
 
     def make_button(
         self,
@@ -773,119 +944,64 @@ class MirrorTrayApp:
         return button
 
     def create_config_form(self, parent: tk.Misc) -> None:
-        panel = RoundedPanel(parent, radius=14, padx=18, pady=16)
-        panel.pack(fill="x", pady=(20, 0))
-        form = panel.content
-        form.columnconfigure(0, minsize=78)
-        form.columnconfigure(1, weight=1)
-        form.columnconfigure(2, minsize=64)
-
-        settings_label = tk.Label(
-            form,
-            text=self.t("settings"),
-            bg=CARD_COLOR,
-            fg=TEXT_COLOR,
-            font=(UI_FONT, 11, "bold"),
-        )
-        settings_label.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
-        self.register_i18n(settings_label, "settings")
-
         self.source_var = tk.StringVar()
         self.target_var = tk.StringVar()
         self.interval_var = tk.StringVar(value="0")
+        self.zzc_merge_interval_var = tk.StringVar(value="30")
+        self.zzc_merge_unit_var = tk.StringVar(value="分钟")
+        self.startup_delay_var = tk.StringVar(value="10")
+        self.deploy_command_var = tk.StringVar()
         self.delete_extra_var = tk.BooleanVar(value=True)
         self.startup_var = tk.BooleanVar(value=is_startup_enabled())
+        self.auto_merge_zzc_var = tk.BooleanVar(value=False)
+        self.startup_auto_merge_var = tk.BooleanVar(value=False)
+        self.auto_deploy_after_merge_var = tk.BooleanVar(value=False)
 
-        self.make_label(form, "source").grid(row=1, column=0, sticky="w", pady=5)
-        self.make_entry(form, self.source_var).grid(
-            row=1, column=1, sticky="ew", padx=(10, 10), pady=5
-        )
-        self.make_button(form, "choose", self.choose_source, min_width=60).grid(
-            row=1, column=2, pady=5
-        )
+        tabs_host = tk.Frame(parent, bg=BG_COLOR)
+        tabs_host.pack(fill="x", expand=False, pady=(14, 0))
+        tab_bar = tk.Frame(tabs_host, bg=BG_COLOR)
+        tab_bar.pack(fill="x", pady=(0, 8))
+        tab_body = tk.Frame(tabs_host, bg=CARD_COLOR, highlightthickness=1, highlightbackground=BORDER_COLOR)
+        tab_body.pack(fill="x", expand=False)
 
-        self.make_label(form, "target").grid(row=2, column=0, sticky="w", pady=5)
-        self.make_entry(form, self.target_var).grid(
-            row=2, column=1, sticky="ew", padx=(10, 10), pady=5
-        )
-        self.make_button(form, "choose", self.choose_target, min_width=60).grid(
-            row=2, column=2, pady=5
-        )
-
-        rules = tk.Frame(form, bg=CARD_COLOR)
-        rules.grid(row=3, column=0, columnspan=3, sticky="nsew", pady=(16, 0))
-        rules.columnconfigure(0, weight=1)
-        rules.columnconfigure(1, weight=1)
-
-        source_rules = tk.Frame(rules, bg=CARD_COLOR)
-        source_rules.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        source_rules.columnconfigure(0, weight=1)
-        self.make_label(source_rules, "include").grid(
-            row=0, column=0, sticky="w"
+        sync_tab = self.create_tab(tab_body)
+        rules_tab = self.create_tab(tab_body)
+        merge_tab = self.create_tab(tab_body)
+        self.create_segmented_tabs(
+            tab_bar,
+            [
+                ("同步目录", sync_tab),
+                ("同步规则", rules_tab),
+                ("自造词合并", merge_tab),
+            ],
         )
 
-        include_panel = tk.Frame(source_rules, bg=CARD_COLOR)
-        include_panel.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        self.include_text = self.create_rule_text(include_panel, height=5)
-        self.pack_rule_text(include_panel, self.include_text, pady=(0, 6))
-        include_buttons = tk.Frame(include_panel, bg=CARD_COLOR)
-        include_buttons.pack(anchor="w")
-        self.make_button(
-            include_buttons,
-            "choose",
-            self.add_include_items,
-            min_width=76,
-        ).pack(side="left")
-        self.make_button(
-            include_buttons,
-            "clear",
-            self.clear_include,
-            min_width=62,
-        ).pack(side="left", padx=(6, 0))
+        sync_tab.columnconfigure(0, minsize=86)
+        sync_tab.columnconfigure(1, weight=1)
+        sync_tab.columnconfigure(2, minsize=64)
 
-        source_exclude_panel = tk.Frame(source_rules, bg=CARD_COLOR)
-        source_exclude_panel.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        self.make_label(source_exclude_panel, "exclude").pack(anchor="w", pady=(0, 8))
-        self.exclude_text = self.create_rule_text(source_exclude_panel, height=5)
-        self.pack_rule_text(source_exclude_panel, self.exclude_text, pady=(0, 6))
-        source_exclude_buttons = tk.Frame(source_exclude_panel, bg=CARD_COLOR)
-        source_exclude_buttons.pack(anchor="w")
-        self.make_button(
-            source_exclude_buttons,
-            "choose",
-            self.add_exclude_items,
-            min_width=76,
-        ).pack(side="left")
-        self.make_button(
-            source_exclude_buttons,
-            "clear",
-            self.clear_exclude,
-            min_width=62,
-        ).pack(side="left", padx=(6, 0))
+        settings_label = self.section_title(sync_tab, "settings")
+        settings_label.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 16))
 
-        protect_panel = tk.Frame(rules, bg=CARD_COLOR)
-        protect_panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        self.make_label(protect_panel, "keep").pack(anchor="w")
-        self.target_protect_text = self.create_rule_text(protect_panel, height=13)
-        self.pack_rule_text(protect_panel, self.target_protect_text, pady=(8, 6))
-        protect_buttons = tk.Frame(protect_panel, bg=CARD_COLOR)
-        protect_buttons.pack(anchor="w")
-        self.make_button(
-            protect_buttons,
-            "choose",
-            self.add_target_protected_items,
-            min_width=76,
-        ).pack(side="left")
-        self.make_button(
-            protect_buttons,
-            "clear",
-            self.clear_target_protect,
-            min_width=62,
-        ).pack(side="left", padx=(6, 0))
+        self.make_label(sync_tab, "source").grid(row=1, column=0, sticky="w", pady=8)
+        self.make_entry(sync_tab, self.source_var).grid(
+            row=1, column=1, sticky="ew", padx=(10, 10), pady=8
+        )
+        self.make_button(sync_tab, "choose", self.choose_source, min_width=60).grid(
+            row=1, column=2, pady=8
+        )
 
-        self.make_label(form, "delay").grid(row=4, column=0, sticky="w", pady=(14, 3))
+        self.make_label(sync_tab, "target").grid(row=2, column=0, sticky="w", pady=8)
+        self.make_entry(sync_tab, self.target_var).grid(
+            row=2, column=1, sticky="ew", padx=(10, 10), pady=8
+        )
+        self.make_button(sync_tab, "choose", self.choose_target, min_width=60).grid(
+            row=2, column=2, pady=8
+        )
+
+        self.make_label(sync_tab, "delay").grid(row=3, column=0, sticky="w", pady=(16, 6))
         tk.Spinbox(
-            form,
+            sync_tab,
             from_=0,
             to=86400,
             textvariable=self.interval_var,
@@ -898,12 +1014,12 @@ class MirrorTrayApp:
             highlightthickness=1,
             highlightbackground=BORDER_COLOR,
             highlightcolor=PRIMARY_COLOR,
-        ).grid(row=4, column=1, sticky="w", padx=(10, 0), pady=(14, 3))
-        self.make_hint(form, "seconds").grid(row=4, column=1, sticky="w", padx=(82, 0), pady=(14, 3))
+        ).grid(row=3, column=1, sticky="w", padx=(10, 0), pady=(16, 6))
+        self.make_hint(sync_tab, "seconds").grid(row=3, column=1, sticky="w", padx=(82, 0), pady=(16, 6))
 
-        self.make_label(form, "options").grid(row=5, column=0, sticky="w", pady=(12, 0))
-        option_row = tk.Frame(form, bg=CARD_COLOR)
-        option_row.grid(row=5, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(12, 0))
+        self.make_label(sync_tab, "options").grid(row=4, column=0, sticky="w", pady=(14, 0))
+        option_row = tk.Frame(sync_tab, bg=CARD_COLOR)
+        option_row.grid(row=4, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(14, 0))
         clean_check = tk.Checkbutton(
             option_row,
             text=self.t("clean_extra"),
@@ -926,14 +1042,199 @@ class MirrorTrayApp:
         )
         startup_check.pack(side="left", padx=(22, 0))
         self.register_i18n(startup_check, "startup")
-        self.make_hint(form, "keep_hint").grid(
-            row=6,
+        self.make_hint(sync_tab, "keep_hint").grid(
+            row=5,
             column=1,
             columnspan=2,
             sticky="w",
             padx=(10, 0),
             pady=(2, 0),
         )
+
+        merge_tab.columnconfigure(0, minsize=104)
+        merge_tab.columnconfigure(1, weight=1)
+        merge_tab.columnconfigure(2, minsize=64)
+        self.section_title(merge_tab, "scheduled_tasks").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
+
+        auto_merge_check = tk.Checkbutton(
+            merge_tab,
+            text=self.t("auto_merge_zzc"),
+            variable=self.auto_merge_zzc_var,
+            bg=CARD_COLOR,
+            fg=TEXT_COLOR,
+            activebackground=CARD_COLOR,
+            font=(UI_FONT, 10),
+        )
+        auto_merge_check.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        self.register_i18n(auto_merge_check, "auto_merge_zzc")
+
+        self.make_label(merge_tab, "zzc_target_dicts").grid(row=2, column=0, sticky="nw", pady=4)
+        target_box = tk.Frame(merge_tab, bg=CARD_COLOR)
+        target_box.grid(row=2, column=1, sticky="ew", padx=(10, 10), pady=4)
+        self.zzc_target_dicts_text = self.create_rule_text(target_box, height=1)
+        self.pack_rule_text(target_box, self.zzc_target_dicts_text, pady=(0, 6))
+        target_buttons = tk.Frame(target_box, bg=CARD_COLOR)
+        target_buttons.pack(anchor="w")
+        self.make_button(target_buttons, "choose", self.add_zzc_target_dicts, min_width=76).pack(side="left")
+        self.make_button(target_buttons, "clear", self.clear_zzc_target_dicts, min_width=62).pack(side="left", padx=(6, 0))
+
+        self.make_label(merge_tab, "merge_interval").grid(row=3, column=0, sticky="w", pady=(8, 3))
+        interval_row = tk.Frame(merge_tab, bg=CARD_COLOR)
+        interval_row.grid(row=3, column=1, sticky="w", padx=(10, 0), pady=(8, 3))
+        tk.Spinbox(
+            interval_row,
+            from_=0,
+            to=999,
+            textvariable=self.zzc_merge_interval_var,
+            width=10,
+            relief="flat",
+            bd=0,
+            bg="#fbfcff",
+            fg=TEXT_COLOR,
+            font=(UI_FONT, 10),
+            highlightthickness=1,
+            highlightbackground=BORDER_COLOR,
+            highlightcolor=PRIMARY_COLOR,
+        ).pack(side="left")
+        unit_select = ttk.Combobox(
+            interval_row,
+            textvariable=self.zzc_merge_unit_var,
+            values=("分钟", "小时", "天"),
+            state="readonly",
+            width=6,
+            font=(UI_FONT, 10),
+        )
+        unit_select.pack(side="left", padx=(8, 0))
+
+        self.make_label(merge_tab, "startup_delay").grid(row=3, column=1, sticky="w", padx=(210, 0), pady=(8, 3))
+        tk.Spinbox(
+            merge_tab,
+            from_=0,
+            to=1440,
+            textvariable=self.startup_delay_var,
+            width=10,
+            relief="flat",
+            bd=0,
+            bg="#fbfcff",
+            fg=TEXT_COLOR,
+            font=(UI_FONT, 10),
+            highlightthickness=1,
+            highlightbackground=BORDER_COLOR,
+            highlightcolor=PRIMARY_COLOR,
+        ).grid(row=3, column=1, sticky="w", padx=(300, 0), pady=(8, 3))
+        self.make_hint(merge_tab, "minutes").grid(row=3, column=1, sticky="w", padx=(372, 0), pady=(8, 3))
+
+        checkbox_row = tk.Frame(merge_tab, bg=CARD_COLOR)
+        checkbox_row.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        startup_merge_check = tk.Checkbutton(
+            checkbox_row,
+            text=self.t("startup_auto_merge"),
+            variable=self.startup_auto_merge_var,
+            bg=CARD_COLOR,
+            fg=TEXT_COLOR,
+            activebackground=CARD_COLOR,
+            font=(UI_FONT, 10),
+        )
+        startup_merge_check.pack(side="left")
+        self.register_i18n(startup_merge_check, "startup_auto_merge")
+
+        deploy_check = tk.Checkbutton(
+            checkbox_row,
+            text=self.t("auto_deploy_after_merge"),
+            variable=self.auto_deploy_after_merge_var,
+            bg=CARD_COLOR,
+            fg=TEXT_COLOR,
+            activebackground=CARD_COLOR,
+            font=(UI_FONT, 10),
+        )
+        deploy_check.pack(side="left", padx=(24, 0))
+        self.register_i18n(deploy_check, "auto_deploy_after_merge")
+        self.make_label(merge_tab, "deploy_command").grid(row=5, column=0, sticky="w", pady=(8, 3))
+        self.deploy_command_entry = self.make_entry(
+            merge_tab,
+            self.deploy_command_var,
+            placeholder_key="deploy_command_hint",
+        )
+        self.deploy_command_entry.grid(row=5, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=(8, 3))
+
+        rules_tab.columnconfigure(0, weight=1)
+        rules_tab.columnconfigure(1, weight=1)
+        self.section_title(rules_tab, "include").grid(row=0, column=0, sticky="w")
+        include_panel = tk.Frame(rules_tab, bg=CARD_COLOR)
+        include_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(8, 0))
+        self.include_text = self.create_rule_text(include_panel, height=8, placeholder_key="include_rule_hint")
+        self.pack_rule_text(include_panel, self.include_text, pady=(0, 6))
+        include_buttons = tk.Frame(include_panel, bg=CARD_COLOR)
+        include_buttons.pack(anchor="w")
+        self.make_button(include_buttons, "choose", self.add_include_items, min_width=76).pack(side="left")
+        self.make_button(include_buttons, "clear", self.clear_include, min_width=62).pack(side="left", padx=(6, 0))
+
+        self.section_title(rules_tab, "exclude").grid(row=2, column=0, sticky="w", pady=(14, 0))
+        exclude_panel = tk.Frame(rules_tab, bg=CARD_COLOR)
+        exclude_panel.grid(row=3, column=0, sticky="nsew", padx=(0, 8), pady=(8, 0))
+        self.exclude_text = self.create_rule_text(exclude_panel, height=8, placeholder_key="exclude_rule_hint")
+        self.pack_rule_text(exclude_panel, self.exclude_text, pady=(0, 6))
+        exclude_buttons = tk.Frame(exclude_panel, bg=CARD_COLOR)
+        exclude_buttons.pack(anchor="w")
+        self.make_button(exclude_buttons, "choose", self.add_exclude_items, min_width=76).pack(side="left")
+        self.make_button(exclude_buttons, "clear", self.clear_exclude, min_width=62).pack(side="left", padx=(6, 0))
+
+        self.section_title(rules_tab, "keep").grid(row=0, column=1, sticky="w", padx=(8, 0))
+        protect_panel = tk.Frame(rules_tab, bg=CARD_COLOR)
+        protect_panel.grid(row=1, column=1, rowspan=3, sticky="nsew", padx=(8, 0), pady=(8, 0))
+        self.target_protect_text = self.create_rule_text(protect_panel, height=19, placeholder_key="keep_rule_hint")
+        self.pack_rule_text(protect_panel, self.target_protect_text, pady=(0, 6))
+        protect_buttons = tk.Frame(protect_panel, bg=CARD_COLOR)
+        protect_buttons.pack(anchor="w")
+        self.make_button(protect_buttons, "choose", self.add_target_protected_items, min_width=76).pack(side="left")
+        self.make_button(protect_buttons, "clear", self.clear_target_protect, min_width=62).pack(side="left", padx=(6, 0))
+
+    def create_segmented_tabs(self, parent: tk.Misc, tabs: list[tuple[str, tk.Frame]]) -> None:
+        buttons: list[tk.Label] = []
+
+        def select(index: int) -> None:
+            for _, frame in tabs:
+                frame.pack_forget()
+            tabs[index][1].pack(fill="x", expand=False)
+            for idx, button in enumerate(buttons):
+                active = idx == index
+                button.configure(
+                    bg=PRIMARY_COLOR if active else "#e5ecf2",
+                    fg="#ffffff" if active else TEXT_COLOR,
+                    relief="flat",
+                )
+
+        for index, (label, _) in enumerate(tabs):
+            button = tk.Label(
+                parent,
+                text=label,
+                bg="#e5ecf2",
+                fg=TEXT_COLOR,
+                font=(UI_FONT, 10, "bold"),
+                padx=18,
+                pady=8,
+                cursor="hand2",
+                bd=0,
+            )
+            button.pack(side="left", padx=(0 if index == 0 else 8, 0))
+            button.bind("<Button-1>", lambda _event, idx=index: select(idx))
+            buttons.append(button)
+        select(0)
+
+    def create_tab(self, parent: tk.Misc) -> tk.Frame:
+        frame = tk.Frame(parent, bg=CARD_COLOR, padx=20, pady=18)
+        return frame
+
+    def section_title(self, parent: tk.Misc, text_key: str) -> tk.Label:
+        label = tk.Label(
+            parent,
+            text=self.t(text_key),
+            bg=CARD_COLOR,
+            fg=TEXT_COLOR,
+            font=(UI_FONT, 11, "bold"),
+        )
+        self.register_i18n(label, text_key)
+        return label
 
     def make_label(self, parent: tk.Misc, text_key: str) -> tk.Label:
         label = tk.Label(
@@ -957,8 +1258,8 @@ class MirrorTrayApp:
         self.register_i18n(label, text_key)
         return label
 
-    def make_entry(self, parent: tk.Misc, variable: tk.StringVar) -> tk.Entry:
-        return tk.Entry(
+    def make_entry(self, parent: tk.Misc, variable: tk.StringVar, placeholder_key: str | None = None) -> tk.Entry:
+        entry = tk.Entry(
             parent,
             textvariable=variable,
             relief="flat",
@@ -971,13 +1272,18 @@ class MirrorTrayApp:
             highlightbackground=BORDER_COLOR,
             highlightcolor=PRIMARY_COLOR,
         )
+        if placeholder_key:
+            self.entry_placeholder_keys[entry] = placeholder_key
+            entry.bind("<FocusIn>", lambda _event, input_box=entry: self.clear_entry_placeholder(input_box))
+            entry.bind("<FocusOut>", lambda _event, input_box=entry: self.restore_entry_placeholder(input_box))
+        return entry
 
-    def create_rule_text(self, parent: ttk.Frame, height: int) -> tk.Text:
-        return scrolledtext.ScrolledText(
+    def create_rule_text(self, parent: ttk.Frame, height: int, placeholder_key: str | None = None) -> tk.Text:
+        box = scrolledtext.ScrolledText(
             parent,
             height=height,
             width=20,
-            wrap="none",
+            wrap="word" if placeholder_key else "none",
             relief="flat",
             borderwidth=1,
             font=(MONO_FONT, 10),
@@ -988,6 +1294,11 @@ class MirrorTrayApp:
             highlightbackground=BORDER_COLOR,
             highlightcolor=PRIMARY_COLOR,
         )
+        if placeholder_key:
+            self.rule_placeholder_keys[box] = placeholder_key
+            box.bind("<FocusIn>", lambda _event, text_box=box: self.clear_rule_placeholder(text_box))
+            box.bind("<FocusOut>", lambda _event, text_box=box: self.restore_rule_placeholder(text_box))
+        return box
 
     def pack_rule_text(
         self,
@@ -1045,6 +1356,12 @@ class MirrorTrayApp:
 
     def clear_target_protect(self) -> None:
         self.clear_text_box(self.target_protect_text)
+
+    def add_zzc_target_dicts(self) -> None:
+        self.show_select_menu(self.zzc_target_dicts_text, self.get_source_path)
+
+    def clear_zzc_target_dicts(self) -> None:
+        self.clear_text_box(self.zzc_target_dicts_text)
 
     def show_select_menu(self, box: tk.Text | None, root_getter) -> None:
         if box is None:
@@ -1166,6 +1483,7 @@ class MirrorTrayApp:
             as_folder = selected.is_dir()
         if as_folder:
             rel = "**" if rel in {"", "."} else f"{rel.rstrip('/')}/**"
+        self.clear_rule_placeholder(box)
         append_pattern(box, rel)
         self.root_update()
         self.log(f"已添加规则: {rel}")
@@ -1189,7 +1507,9 @@ class MirrorTrayApp:
 
     def clear_text_box(self, box: tk.Text | None) -> None:
         if box is not None:
+            self.clear_rule_placeholder(box)
             box.delete("1.0", "end")
+            self.restore_rule_placeholder(box)
             self.root_update()
 
     def root_update(self) -> None:
@@ -1211,11 +1531,25 @@ class MirrorTrayApp:
         self.set_text_var(self.source_var, "" if is_empty_path(config.source) else config.source.as_posix())
         self.set_text_var(self.target_var, "" if is_empty_path(config.target) else config.target.as_posix())
         self.set_text_var(self.interval_var, f"{config.interval_seconds:g}")
+        interval_value, interval_unit = self.display_merge_interval(config.scheduled_tasks.zzc_merge_interval_minutes)
+        self.set_text_var(self.zzc_merge_interval_var, f"{interval_value:g}")
+        self.set_text_var(self.zzc_merge_unit_var, interval_unit)
+        self.set_text_var(self.startup_delay_var, f"{config.scheduled_tasks.startup_delay_minutes:g}")
+        self.clear_entry_placeholder(self.deploy_command_entry)
+        self.set_text_var(self.deploy_command_var, config.scheduled_tasks.deploy_command)
+        self.restore_entry_placeholder(self.deploy_command_entry)
         if self.delete_extra_var is not None:
             self.delete_extra_var.set(config.delete_extra)
+        if self.auto_merge_zzc_var is not None:
+            self.auto_merge_zzc_var.set(config.scheduled_tasks.auto_merge_zzc)
+        if self.startup_auto_merge_var is not None:
+            self.startup_auto_merge_var.set(config.scheduled_tasks.startup_auto_merge)
+        if self.auto_deploy_after_merge_var is not None:
+            self.auto_deploy_after_merge_var.set(config.scheduled_tasks.auto_deploy_after_merge)
         self.set_text_box(self.include_text, config.include)
         self.set_text_box(self.exclude_text, config.exclude)
         self.set_text_box(self.target_protect_text, config.target_protect)
+        self.set_text_box(self.zzc_target_dicts_text, config.scheduled_tasks.zzc_target_dicts)
 
     def migrate_old_delay_default(self, config: SyncConfig) -> SyncConfig:
         if config.interval_seconds != 2:
@@ -1228,6 +1562,7 @@ class MirrorTrayApp:
             target_protect=config.target_protect,
             interval_seconds=0,
             delete_extra=config.delete_extra,
+            scheduled_tasks=config.scheduled_tasks,
         )
         try:
             save_config(CONFIG_PATH, migrated)
@@ -1240,13 +1575,65 @@ class MirrorTrayApp:
         if variable is not None:
             variable.set(value)
 
+    def clear_entry_placeholder(self, entry: tk.Entry | None) -> None:
+        if entry is None or entry not in self.entry_placeholder_active:
+            return
+        entry.delete(0, "end")
+        entry.configure(fg=TEXT_COLOR)
+        self.entry_placeholder_active.discard(entry)
+
+    def restore_entry_placeholder(self, entry: tk.Entry | None) -> None:
+        if entry is None or entry not in self.entry_placeholder_keys:
+            return
+        if entry.get().strip():
+            return
+        entry.delete(0, "end")
+        entry.insert(0, self.t(self.entry_placeholder_keys[entry]))
+        entry.configure(fg="#98a2b3")
+        self.entry_placeholder_active.add(entry)
+
     def set_text_box(self, box: tk.Text | None, lines: tuple[str, ...]) -> None:
         if box is None:
             return
+        self.clear_rule_placeholder(box)
         box.delete("1.0", "end")
         box.insert("1.0", "\n".join(lines))
         box.see("1.0")
         box.update_idletasks()
+        self.restore_rule_placeholder(box)
+
+    def clear_rule_placeholder(self, box: tk.Text | None) -> None:
+        if box is None or box not in self.rule_placeholder_active:
+            return
+        box.delete("1.0", "end")
+        box.tag_remove("placeholder", "1.0", "end")
+        box.configure(fg="#172033")
+        self.rule_placeholder_active.discard(box)
+
+    def restore_rule_placeholder(self, box: tk.Text | None) -> None:
+        if box is None or box not in self.rule_placeholder_keys:
+            return
+        if box.get("1.0", "end").strip():
+            return
+        box.delete("1.0", "end")
+        box.insert("1.0", self.t(self.rule_placeholder_keys[box]))
+        box.tag_add("placeholder", "1.0", "end")
+        box.configure(fg="#98a2b3")
+        self.rule_placeholder_active.add(box)
+
+    def display_merge_interval(self, minutes: float) -> tuple[float, str]:
+        if minutes > 0 and minutes % (24 * 60) == 0:
+            return minutes / (24 * 60), "天"
+        if minutes > 0 and minutes % 60 == 0:
+            return minutes / 60, "小时"
+        return minutes, "分钟"
+
+    def merge_interval_to_minutes(self, value: float, unit: str) -> float:
+        if unit == "天":
+            return value * 24 * 60
+        if unit == "小时":
+            return value * 60
+        return value
 
     def save_form_config(self) -> None:
         try:
@@ -1282,11 +1669,19 @@ class MirrorTrayApp:
                 self.source_var,
                 self.target_var,
                 self.interval_var,
+                self.zzc_merge_interval_var,
+                self.zzc_merge_unit_var,
+                self.startup_delay_var,
+                self.deploy_command_var,
                 self.delete_extra_var,
                 self.startup_var,
+                self.auto_merge_zzc_var,
+                self.startup_auto_merge_var,
+                self.auto_deploy_after_merge_var,
                 self.include_text,
                 self.exclude_text,
                 self.target_protect_text,
+                self.zzc_target_dicts_text,
             )
         ):
             raise ValueError("配置窗口还未准备好。")
@@ -1298,9 +1693,19 @@ class MirrorTrayApp:
         include = tuple(read_patterns(self.include_text))
         exclude = tuple(read_patterns(self.exclude_text))
         target_protect = tuple(read_patterns(self.target_protect_text))
+        zzc_target_dicts = tuple(read_patterns(self.zzc_target_dicts_text))
         interval_seconds = float(self.interval_var.get().strip())
+        zzc_merge_interval_minutes = self.merge_interval_to_minutes(
+            float(self.zzc_merge_interval_var.get().strip()),
+            self.zzc_merge_unit_var.get().strip(),
+        )
+        startup_delay_minutes = float(self.startup_delay_var.get().strip())
         if interval_seconds < 0:
             raise ValueError("触发延迟不能小于 0 秒。")
+        if zzc_merge_interval_minutes < 0:
+            raise ValueError("自造词合并间隔不能小于 0 分钟。")
+        if startup_delay_minutes < 0:
+            raise ValueError("开机合并等待时间不能小于 0 分钟。")
         return SyncConfig(
             source=source.resolve() if source_text else source,
             target=target.resolve() if target_text else target,
@@ -1309,6 +1714,15 @@ class MirrorTrayApp:
             target_protect=target_protect,
             interval_seconds=interval_seconds,
             delete_extra=bool(self.delete_extra_var.get()),
+            scheduled_tasks=ScheduledTasksConfig(
+                auto_merge_zzc=bool(self.auto_merge_zzc_var.get()),
+                zzc_target_dicts=zzc_target_dicts,
+                zzc_merge_interval_minutes=zzc_merge_interval_minutes,
+                startup_auto_merge=bool(self.startup_auto_merge_var.get()),
+                startup_delay_minutes=startup_delay_minutes,
+                auto_deploy_after_merge=bool(self.auto_deploy_after_merge_var.get()),
+                deploy_command="" if self.deploy_command_entry in self.entry_placeholder_active else self.deploy_command_var.get().strip(),
+            ),
         )
 
     def hide_window(self) -> None:
@@ -1339,6 +1753,8 @@ class MirrorTrayApp:
         self.started = True
         self.paused = False
         self.initial_sync_pending = True
+        self.startup_sync_started_at = time.monotonic()
+        self.startup_merge_done = False
         self.change_event.clear()
         self.log("开机启动并启用同步")
         self.set_status("启动中")
@@ -1377,7 +1793,9 @@ class MirrorTrayApp:
     def run_sync_from_config(self, config: SyncConfig) -> None:
         config.target.mkdir(parents=True, exist_ok=True)
         self.set_status("正在同步")
-        stats = sync_once(config, logger=self.log)
+        with self.operation_lock:
+            reconcile_ops_between_roots(config.source, config.target, logger=self.log)
+            stats = sync_once(self.sync_config_with_zzc_protected(config), logger=self.log)
         if stats.has_changes():
             self.log(
                 f"同步完成 copied={stats.copied} "
@@ -1385,7 +1803,132 @@ class MirrorTrayApp:
             )
         self.set_status("同步完成")
         if self.root:
-            self.root.after(1500, lambda: self.set_status("监听中") if self.started and not self.paused else None)
+                self.root.after(1500, lambda: self.set_status("监听中") if self.started and not self.paused else None)
+
+    def sync_config_with_zzc_protected(self, config: SyncConfig) -> SyncConfig:
+        protects = list(config.target_protect)
+        for pattern in ("*.zzc.dict.yaml",):
+            if pattern not in protects:
+                protects.append(pattern)
+        return SyncConfig(
+            source=config.source,
+            target=config.target,
+            include=config.include,
+            exclude=config.exclude,
+            target_protect=tuple(protects),
+            interval_seconds=config.interval_seconds,
+            delete_extra=config.delete_extra,
+            scheduled_tasks=config.scheduled_tasks,
+        )
+
+    def zzc_files_stable(self, config: SyncConfig) -> bool:
+        scheme = find_scheme(config.source)
+        target_scheme = find_scheme(config.target)
+        paths = []
+        if scheme:
+            paths.append(scheme.ops)
+        if target_scheme:
+            paths.append(target_scheme.ops)
+        if not paths:
+            return False
+        now = time.time()
+        for path in paths:
+            if path.exists() and now - path.stat().st_mtime < ZZC_STABLE_SECONDS:
+                return False
+        return True
+
+    def run_zzc_merge_from_config(self, config: SyncConfig, manual: bool = False) -> bool:
+        ensure_safe_config(config)
+        self.set_status("正在合并")
+        with self.operation_lock:
+            if not manual and not self.zzc_files_stable(config):
+                self.log("[zzc] 文件仍在变化，跳过本次自动合并")
+                self.set_status("监听中" if self.started and not self.paused else self.base_status)
+                return False
+            reconcile_ops_between_roots(config.source, config.target, logger=self.log)
+            changed = merge_root(
+                config.source,
+                target_dicts=config.scheduled_tasks.zzc_target_dicts,
+                logger=self.log,
+            )
+            if changed:
+                copy_managed_files(
+                    config.source,
+                    config.target,
+                    target_dicts=config.scheduled_tasks.zzc_target_dicts,
+                    logger=self.log,
+                )
+                self.last_zzc_merge_at = time.monotonic()
+                if config.scheduled_tasks.auto_deploy_after_merge:
+                    self.run_deploy(config)
+                self.set_status("合并完成")
+                return True
+            source_scheme = find_scheme(config.source)
+            target_scheme = find_scheme(config.target)
+            if source_scheme and target_scheme:
+                clear_ops(target_scheme)
+                copy_managed_files(
+                    config.source,
+                    config.target,
+                    target_dicts=config.scheduled_tasks.zzc_target_dicts,
+                    logger=self.log,
+                )
+            self.set_status("合并完成")
+            return False
+
+    def scheduled_task_loop(self) -> None:
+        while not self.stop_event.is_set():
+            self.stop_event.wait(30)
+            if self.stop_event.is_set() or not self.started or self.paused:
+                continue
+            try:
+                config = load_config(CONFIG_PATH)
+                tasks = config.scheduled_tasks
+                if not tasks.auto_merge_zzc:
+                    continue
+                now = time.monotonic()
+                startup_due = (
+                    tasks.startup_auto_merge
+                    and not self.startup_merge_done
+                    and self.startup_sync_started_at > 0
+                    and now - self.startup_sync_started_at >= tasks.startup_delay_minutes * 60
+                )
+                interval_due = (
+                    self.last_zzc_merge_at <= 0
+                    or now - self.last_zzc_merge_at >= tasks.zzc_merge_interval_minutes * 60
+                )
+                if not startup_due and not interval_due:
+                    continue
+                merged = self.run_zzc_merge_from_config(config, manual=False)
+                if startup_due:
+                    self.startup_merge_done = True
+                if merged:
+                    self.log("[zzc] 定时合并完成")
+            except BaseException as exc:
+                self.log(f"[error] 定时合并失败: {exc}")
+                self.log(traceback.format_exc())
+                self.set_status("监听或同步失败")
+
+    def run_deploy(self, config: SyncConfig) -> None:
+        command = config.scheduled_tasks.deploy_command.strip()
+        if not command:
+            candidates = [
+                Path(r"C:\Program Files (x86)\Rime\weasel-0.16.3\WeaselDeployer.exe"),
+                Path(r"C:\Program Files (x86)\Rime\weasel\WeaselDeployer.exe"),
+                Path(r"C:\Program Files\Rime\weasel\WeaselDeployer.exe"),
+            ]
+            for candidate in candidates:
+                if candidate.exists():
+                    command = f'"{candidate}" /deploy'
+                    break
+        if not command:
+            self.log("[zzc] 未找到部署程序，跳过自动重新部署")
+            return
+        result = subprocess.run(command, shell=True, cwd=str(config.target), capture_output=True, text=True, timeout=120)
+        if result.returncode == 0:
+            self.log("[zzc] 已自动重新部署")
+            return
+        self.log(f"[error] 自动重新部署失败 code={result.returncode} stdout={result.stdout} stderr={result.stderr}")
 
     def wait_until_change(self) -> bool:
         while not self.stop_event.is_set():
@@ -1469,6 +2012,8 @@ class MirrorTrayApp:
             self.started = True
             self.paused = False
             self.initial_sync_pending = True
+            self.startup_sync_started_at = time.monotonic()
+            self.startup_merge_done = False
             self.change_event.clear()
             self.log("启动同步")
             self.set_status("启动中")
@@ -1489,7 +2034,9 @@ class MirrorTrayApp:
             ensure_safe_config(config)
             save_config(CONFIG_PATH, config)
             self.set_status("正在同步")
-            stats = sync_once(config, logger=self.log)
+            with self.operation_lock:
+                reconcile_ops_between_roots(config.source, config.target, logger=self.log)
+                stats = sync_once(self.sync_config_with_zzc_protected(config), logger=self.log)
             self.set_status("同步完成")
             if self.root:
                 next_status = "监听中" if self.started and not self.paused else self.base_status
@@ -1501,6 +2048,17 @@ class MirrorTrayApp:
         except BaseException as exc:
             self.log(f"[error] 手动同步失败: {exc}")
             messagebox.showerror(APP_NAME, f"手动同步失败：{exc}")
+
+    def merge_now(self, icon=None, item=None) -> None:
+        try:
+            config = self.config_from_form()
+            save_config(CONFIG_PATH, config)
+            changed = self.run_zzc_merge_from_config(config, manual=True)
+            self.log("手动合并完成" + ("，有写入" if changed else "，无待合并操作"))
+        except BaseException as exc:
+            self.log(f"[error] 手动合并失败: {exc}")
+            self.log(traceback.format_exc())
+            messagebox.showerror(APP_NAME, f"手动合并失败：{exc}")
 
     def open_log(self, icon=None, item=None) -> None:
         if not LOG_PATH.exists():
@@ -1642,6 +2200,8 @@ def cleanup_log_file(log_path: Path) -> None:
 
 
 def read_patterns(box: tk.Text) -> list[str]:
+    if box.tag_ranges("placeholder"):
+        return []
     lines = box.get("1.0", "end").splitlines()
     return [line.strip().replace("\\", "/") for line in lines if line.strip()]
 
@@ -1667,8 +2227,14 @@ def append_pattern(box: tk.Text, pattern: str) -> None:
 
 def main() -> int:
     enable_dpi_awareness()
-    MirrorTrayApp().run()
-    return 0
+    single_instance = SingleInstanceLock()
+    if not single_instance.acquire():
+        return 0
+    try:
+        MirrorTrayApp().run()
+        return 0
+    finally:
+        single_instance.release()
 
 
 if __name__ == "__main__":

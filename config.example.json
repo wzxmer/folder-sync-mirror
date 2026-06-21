@@ -22,5 +22,29 @@
   "interval_seconds": 0,
 
   // 是否删除目标中多出的文件，让目标与来源中被选择同步的内容一致。
-  "delete_extra": true
+  "delete_extra": true,
+
+  // 定时任务。
+  "scheduled_tasks": {
+    // 定时合并天行键自造词。来源文件夹应为 iCloud 方案目录，目标文件夹应为本机 RimeData。
+    "auto_merge_zzc": false,
+
+    // 合并写入哪些正式码表，路径相对来源文件夹。留空时自动使用 <方案>.dict.yaml。
+    "zzc_target_dicts": [],
+
+    // 自动合并自造词的最小间隔，单位分钟。
+    "zzc_merge_interval_minutes": 30,
+
+    // 开机启动后是否自动执行一次合并。
+    "startup_auto_merge": false,
+
+    // 开机后等待多少分钟再执行第一次自动合并，用来等待 iCloud 同步稳定。
+    "startup_delay_minutes": 10,
+
+    // 合并后是否自动重新部署。
+    "auto_deploy_after_merge": false,
+
+    // 重新部署命令。留空时程序会尝试自动查找小狼毫部署程序。
+    "deploy_command": ""
+  }
 }

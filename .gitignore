@@ -6,8 +6,10 @@ build/
 build-onefile/
 build-mac/
 build-linux/
+build-txjx/
 dist/
 dist-onefile/
 dist-mac/
 dist-linux/
+dist-txjx/
 *.spec
