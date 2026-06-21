@@ -597,6 +597,8 @@ class MirrorTrayApp:
         self.status_label: StatusPill | None = None
         self.source_var: tk.StringVar | None = None
         self.target_var: tk.StringVar | None = None
+        self.source_entry: tk.Entry | None = None
+        self.target_entry: tk.Entry | None = None
         self.interval_var: tk.StringVar | None = None
         self.zzc_merge_interval_var: tk.StringVar | None = None
         self.zzc_merge_unit_var: tk.StringVar | None = None
@@ -986,7 +988,8 @@ class MirrorTrayApp:
         settings_label.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 16))
 
         self.make_label(sync_tab, "source").grid(row=1, column=0, sticky="w", pady=8)
-        self.make_entry(sync_tab, self.source_var).grid(
+        self.source_entry = self.make_path_entry(sync_tab, self.source_var)
+        self.source_entry.grid(
             row=1, column=1, sticky="ew", padx=(10, 10), pady=8
         )
         self.make_button(sync_tab, "choose", self.choose_source, min_width=60).grid(
@@ -994,7 +997,8 @@ class MirrorTrayApp:
         )
 
         self.make_label(sync_tab, "target").grid(row=2, column=0, sticky="w", pady=8)
-        self.make_entry(sync_tab, self.target_var).grid(
+        self.target_entry = self.make_path_entry(sync_tab, self.target_var)
+        self.target_entry.grid(
             row=2, column=1, sticky="ew", padx=(10, 10), pady=8
         )
         self.make_button(sync_tab, "choose", self.choose_target, min_width=60).grid(
@@ -1280,6 +1284,13 @@ class MirrorTrayApp:
             entry.bind("<FocusOut>", lambda _event, input_box=entry: self.restore_entry_placeholder(input_box))
         return entry
 
+    def make_path_entry(self, parent: tk.Misc, variable: tk.StringVar | None) -> tk.Entry:
+        if variable is None:
+            variable = tk.StringVar()
+        entry = self.make_entry(parent, variable)
+        entry.bind("<FocusOut>", lambda _event, input_box=entry: self.show_entry_end(input_box), add="+")
+        return entry
+
     def create_rule_text(self, parent: ttk.Frame, height: int, placeholder_key: str | None = None) -> tk.Text:
         box = scrolledtext.ScrolledText(
             parent,
@@ -1311,17 +1322,18 @@ class MirrorTrayApp:
         text.pack(fill="both", expand=True, pady=pady)
 
     def choose_source(self) -> None:
-        self.choose_folder(self.source_var)
+        self.choose_folder(self.source_var, self.source_entry)
 
     def choose_target(self) -> None:
-        self.choose_folder(self.target_var)
+        self.choose_folder(self.target_var, self.target_entry)
 
-    def choose_folder(self, variable: tk.StringVar | None) -> None:
+    def choose_folder(self, variable: tk.StringVar | None, entry: tk.Entry | None = None) -> None:
         if variable is None:
             return
         folder = filedialog.askdirectory(initialdir=variable.get() or str(BASE_DIR))
         if folder:
             variable.set(folder.replace("\\", "/"))
+            self.show_entry_end(entry)
 
     def add_include_file(self) -> None:
         self.add_selected_file(self.include_text)
@@ -1553,6 +1565,7 @@ class MirrorTrayApp:
             self.log(f"已加载配置: {CONFIG_PATH}")
             self.set_text_var(self.source_var, "" if is_empty_path(config.source) else config.source.as_posix())
             self.set_text_var(self.target_var, "" if is_empty_path(config.target) else config.target.as_posix())
+            self.show_path_entries_end()
             self.set_text_var(self.interval_var, f"{config.interval_seconds:g}")
             interval_value, interval_unit = self.display_merge_interval(config.scheduled_tasks.zzc_merge_interval_minutes)
             self.set_text_var(self.zzc_merge_interval_var, f"{interval_value:g}")
@@ -1599,6 +1612,16 @@ class MirrorTrayApp:
     def set_text_var(self, variable: tk.StringVar | None, value: str) -> None:
         if variable is not None:
             variable.set(value)
+
+    def show_path_entries_end(self) -> None:
+        self.show_entry_end(self.source_entry)
+        self.show_entry_end(self.target_entry)
+
+    def show_entry_end(self, entry: tk.Entry | None) -> None:
+        if entry is None:
+            return
+        entry.icursor("end")
+        entry.xview_moveto(1.0)
 
     def clear_entry_placeholder(self, entry: tk.Entry | None) -> None:
         if entry is None or entry not in self.entry_placeholder_active:
@@ -1827,7 +1850,6 @@ class MirrorTrayApp:
         config.target.mkdir(parents=True, exist_ok=True)
         self.set_status("正在同步")
         with self.operation_lock:
-            reconcile_ops_between_roots(config.source, config.target, logger=self.log)
             stats = sync_once(self.sync_config_with_zzc_protected(config), logger=self.log)
         if stats.has_changes():
             self.log(
@@ -2068,7 +2090,6 @@ class MirrorTrayApp:
             save_config(CONFIG_PATH, config)
             self.set_status("正在同步")
             with self.operation_lock:
-                reconcile_ops_between_roots(config.source, config.target, logger=self.log)
                 stats = sync_once(self.sync_config_with_zzc_protected(config), logger=self.log)
             self.set_status("同步完成")
             if self.root:
