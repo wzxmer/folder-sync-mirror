@@ -40,7 +40,7 @@ else:
     winreg = None
 
 
-APP_NAME = "txjx同步助手"
+APP_NAME = "天行键同步助手"
 STARTUP_VALUE_NAME = "TxjxSyncAssistant"
 MACOS_LAUNCH_AGENT_ID = "com.fusheng.txjxsync"
 WINDOW_WIDTH = 833
@@ -616,6 +616,7 @@ class MirrorTrayApp:
         self.zzc_target_dicts_text: tk.Text | None = None
         self.rule_placeholder_keys: dict[tk.Text, str] = {}
         self.rule_placeholder_active: set[tk.Text] = set()
+        self.loading_form = False
         self.pause_button: RoundedButton | None = None
         self.observer: Observer | None = None
         self.observed_source: Path | None = None
@@ -778,6 +779,7 @@ class MirrorTrayApp:
         self.root.resizable(True, True)
         self.root.configure(bg=BG_COLOR)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
+        self.root.bind_all("<Button-1>", self.clear_focus_on_non_input_click, add="+")
         self.configure_style()
 
         outer = tk.Frame(self.root, bg=BG_COLOR)
@@ -1297,7 +1299,7 @@ class MirrorTrayApp:
         if placeholder_key:
             self.rule_placeholder_keys[box] = placeholder_key
             box.bind("<FocusIn>", lambda _event, text_box=box: self.clear_rule_placeholder(text_box))
-            box.bind("<FocusOut>", lambda _event, text_box=box: self.restore_rule_placeholder(text_box))
+        box.bind("<FocusOut>", lambda _event, text_box=box: self.on_rule_text_focus_out(text_box))
         return box
 
     def pack_rule_text(
@@ -1517,6 +1519,25 @@ class MirrorTrayApp:
             return
         self.root.update_idletasks()
 
+    def clear_focus_on_non_input_click(self, event: tk.Event) -> None:
+        if self.root is None or self.is_input_widget(event.widget):
+            return
+        self.root.focus_set()
+
+    def is_input_widget(self, widget: object) -> bool:
+        if not isinstance(widget, tk.Widget):
+            return False
+        input_classes = {
+            "Text",
+            "Entry",
+            "TEntry",
+            "Spinbox",
+            "TSpinbox",
+            "Combobox",
+            "TCombobox",
+        }
+        return widget.winfo_class() in input_classes
+
     def load_config_into_form(self) -> None:
         if not self.root:
             return
@@ -1527,29 +1548,33 @@ class MirrorTrayApp:
             self.log(f"[error] 加载配置失败 {CONFIG_PATH}: {exc}")
             messagebox.showerror(APP_NAME, f"加载配置失败：{exc}")
             return
-        self.log(f"已加载配置: {CONFIG_PATH}")
-        self.set_text_var(self.source_var, "" if is_empty_path(config.source) else config.source.as_posix())
-        self.set_text_var(self.target_var, "" if is_empty_path(config.target) else config.target.as_posix())
-        self.set_text_var(self.interval_var, f"{config.interval_seconds:g}")
-        interval_value, interval_unit = self.display_merge_interval(config.scheduled_tasks.zzc_merge_interval_minutes)
-        self.set_text_var(self.zzc_merge_interval_var, f"{interval_value:g}")
-        self.set_text_var(self.zzc_merge_unit_var, interval_unit)
-        self.set_text_var(self.startup_delay_var, f"{config.scheduled_tasks.startup_delay_minutes:g}")
-        self.clear_entry_placeholder(self.deploy_command_entry)
-        self.set_text_var(self.deploy_command_var, config.scheduled_tasks.deploy_command)
-        self.restore_entry_placeholder(self.deploy_command_entry)
-        if self.delete_extra_var is not None:
-            self.delete_extra_var.set(config.delete_extra)
-        if self.auto_merge_zzc_var is not None:
-            self.auto_merge_zzc_var.set(config.scheduled_tasks.auto_merge_zzc)
-        if self.startup_auto_merge_var is not None:
-            self.startup_auto_merge_var.set(config.scheduled_tasks.startup_auto_merge)
-        if self.auto_deploy_after_merge_var is not None:
-            self.auto_deploy_after_merge_var.set(config.scheduled_tasks.auto_deploy_after_merge)
-        self.set_text_box(self.include_text, config.include)
-        self.set_text_box(self.exclude_text, config.exclude)
-        self.set_text_box(self.target_protect_text, config.target_protect)
-        self.set_text_box(self.zzc_target_dicts_text, config.scheduled_tasks.zzc_target_dicts)
+        self.loading_form = True
+        try:
+            self.log(f"已加载配置: {CONFIG_PATH}")
+            self.set_text_var(self.source_var, "" if is_empty_path(config.source) else config.source.as_posix())
+            self.set_text_var(self.target_var, "" if is_empty_path(config.target) else config.target.as_posix())
+            self.set_text_var(self.interval_var, f"{config.interval_seconds:g}")
+            interval_value, interval_unit = self.display_merge_interval(config.scheduled_tasks.zzc_merge_interval_minutes)
+            self.set_text_var(self.zzc_merge_interval_var, f"{interval_value:g}")
+            self.set_text_var(self.zzc_merge_unit_var, interval_unit)
+            self.set_text_var(self.startup_delay_var, f"{config.scheduled_tasks.startup_delay_minutes:g}")
+            self.clear_entry_placeholder(self.deploy_command_entry)
+            self.set_text_var(self.deploy_command_var, config.scheduled_tasks.deploy_command)
+            self.restore_entry_placeholder(self.deploy_command_entry)
+            if self.delete_extra_var is not None:
+                self.delete_extra_var.set(config.delete_extra)
+            if self.auto_merge_zzc_var is not None:
+                self.auto_merge_zzc_var.set(config.scheduled_tasks.auto_merge_zzc)
+            if self.startup_auto_merge_var is not None:
+                self.startup_auto_merge_var.set(config.scheduled_tasks.startup_auto_merge)
+            if self.auto_deploy_after_merge_var is not None:
+                self.auto_deploy_after_merge_var.set(config.scheduled_tasks.auto_deploy_after_merge)
+            self.set_text_box(self.include_text, config.include)
+            self.set_text_box(self.exclude_text, config.exclude)
+            self.set_text_box(self.target_protect_text, config.target_protect)
+            self.set_text_box(self.zzc_target_dicts_text, config.scheduled_tasks.zzc_target_dicts)
+        finally:
+            self.loading_form = False
 
     def migrate_old_delay_default(self, config: SyncConfig) -> SyncConfig:
         if config.interval_seconds != 2:
@@ -1601,6 +1626,14 @@ class MirrorTrayApp:
         box.see("1.0")
         box.update_idletasks()
         self.restore_rule_placeholder(box)
+        box.edit_modified(False)
+
+    def on_rule_text_focus_out(self, box: tk.Text) -> None:
+        self.restore_rule_placeholder(box)
+        box.edit_modified(False)
+        if self.loading_form:
+            return
+        self.save_form_config_silent()
 
     def clear_rule_placeholder(self, box: tk.Text | None) -> None:
         if box is None or box not in self.rule_placeholder_active:

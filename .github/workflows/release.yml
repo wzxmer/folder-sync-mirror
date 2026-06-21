@@ -17,7 +17,7 @@ permissions:
   contents: write
 
 env:
-  APP_NAME: txjxSyncAssistant
+  APP_NAME: 天行键同步助手
   APP_VERSION: 1.0.0
 
 jobs:
@@ -49,6 +49,10 @@ jobs:
           --add-data "config.example.json;."
           tray_app.py
 
+      - name: Copy portable executable
+        shell: pwsh
+        run: Copy-Item "dist-windows\天行键同步助手.exe" "dist-windows\txjxSyncAssistant.exe" -Force
+
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
@@ -56,10 +60,10 @@ jobs:
         shell: pwsh
         run: |
           $iss = @"
-          #define MyAppName "txjx同步助手"
+          #define MyAppName "天行键同步助手"
           #define MyAppVersion "${{ env.APP_VERSION }}"
           #define MyAppPublisher "Fusheng"
-          #define MyAppExeName "txjxSyncAssistant.exe"
+          #define MyAppExeName "天行键同步助手.exe"
 
           [Setup]
           AppId={{B4C71ED4-91B4-45AE-8749-F6B6567A5A0B}
@@ -134,8 +138,8 @@ jobs:
       - name: Build DMG
         run: |
           hdiutil create \
-            -volname "txjx同步助手" \
-            -srcfolder "dist-macos/txjxSyncAssistant.app" \
+            -volname "天行键同步助手" \
+            -srcfolder "dist-macos/天行键同步助手.app" \
             -ov \
             -format UDZO \
             "txjxSyncAssistant_${APP_VERSION}_x64.dmg"
@@ -184,7 +188,7 @@ jobs:
           mkdir -p pkg-deb/DEBIAN
           mkdir -p pkg-deb/opt/txjx-sync-assistant
           mkdir -p pkg-deb/usr/share/applications
-          install -m 755 dist-linux/txjxSyncAssistant pkg-deb/opt/txjx-sync-assistant/txjxSyncAssistant
+          install -m 755 "dist-linux/天行键同步助手" pkg-deb/opt/txjx-sync-assistant/txjxSyncAssistant
           cat > pkg-deb/DEBIAN/control <<EOF
           Package: txjx-sync-assistant
           Version: ${APP_VERSION}
@@ -197,7 +201,7 @@ jobs:
           cat > pkg-deb/usr/share/applications/txjx-sync-assistant.desktop <<EOF
           [Desktop Entry]
           Type=Application
-          Name=txjx同步助手
+          Name=天行键同步助手
           Exec=/opt/txjx-sync-assistant/txjxSyncAssistant
           Terminal=false
           Categories=Utility;
@@ -209,11 +213,11 @@ jobs:
           mkdir -p rpmroot/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
           mkdir -p rpm-src/opt/txjx-sync-assistant
           mkdir -p rpm-src/usr/share/applications
-          install -m 755 dist-linux/txjxSyncAssistant rpm-src/opt/txjx-sync-assistant/txjxSyncAssistant
+          install -m 755 "dist-linux/天行键同步助手" rpm-src/opt/txjx-sync-assistant/txjxSyncAssistant
           cat > rpm-src/usr/share/applications/txjx-sync-assistant.desktop <<EOF
           [Desktop Entry]
           Type=Application
-          Name=txjx同步助手
+          Name=天行键同步助手
           Exec=/opt/txjx-sync-assistant/txjxSyncAssistant
           Terminal=false
           Categories=Utility;

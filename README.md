@@ -1,6 +1,6 @@
-# txjx同步助手
+# 天行键同步助手
 
-txjx同步助手 is a desktop tray app for txjx folder synchronization and zzc merge. It watches a source folder, copies selected content into a target folder, and can remove extra target files so the target stays consistent with the selected source content.
+天行键同步助手 is a desktop tray app for txjx folder synchronization and zzc merge. It watches a source folder, copies selected content into a target folder, and can remove extra target files so the target stays consistent with the selected source content.
 
 Version: `1.0.0`
 
