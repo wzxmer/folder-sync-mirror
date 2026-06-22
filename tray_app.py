@@ -101,6 +101,7 @@ TRANSLATIONS = {
         "saved": "已保存配置",
         "scheduled_tasks": "定时任务",
         "auto_merge_zzc": "自动合并自造词",
+        "auto_merge_zzc_hint": "开启后，普通同步会保护 *.zzc.dict.yaml 不被覆盖；关闭时完全按“保留内容”列表处理。",
         "zzc_target_dicts": "合并目标码表",
         "merge_interval": "合并间隔",
         "merge_unit_minutes": "分钟",
@@ -152,6 +153,7 @@ TRANSLATIONS = {
         "saved": "Saved",
         "scheduled_tasks": "Scheduled Tasks",
         "auto_merge_zzc": "Auto merge zzc",
+        "auto_merge_zzc_hint": "When enabled, normal sync protects *.zzc.dict.yaml from overwrite. When disabled, only Keep rules apply.",
         "zzc_target_dicts": "Target Dictionaries",
         "merge_interval": "Merge Interval",
         "merge_unit_minutes": "min",
@@ -777,7 +779,7 @@ class MirrorTrayApp:
         self.root = tk.Tk()
         self.root.title(f"{APP_NAME} {__version__}")
         self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.root.minsize(820, 760)
+        self.root.minsize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.root.resizable(True, True)
         self.root.configure(bg=BG_COLOR)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
@@ -1006,7 +1008,7 @@ class MirrorTrayApp:
         )
 
         self.make_label(sync_tab, "delay").grid(row=3, column=0, sticky="w", pady=(16, 6))
-        tk.Spinbox(
+        self.interval_spinbox = tk.Spinbox(
             sync_tab,
             from_=0,
             to=86400,
@@ -1020,7 +1022,9 @@ class MirrorTrayApp:
             highlightthickness=1,
             highlightbackground=BORDER_COLOR,
             highlightcolor=PRIMARY_COLOR,
-        ).grid(row=3, column=1, sticky="w", padx=(10, 0), pady=(16, 6))
+        )
+        self.interval_spinbox.grid(row=3, column=1, sticky="w", padx=(10, 0), pady=(16, 6))
+        self.interval_spinbox.bind("<FocusOut>", self.save_form_config_silent)
         self.make_hint(sync_tab, "seconds").grid(row=3, column=1, sticky="w", padx=(82, 0), pady=(16, 6))
 
         self.make_label(sync_tab, "options").grid(row=4, column=0, sticky="w", pady=(14, 0))
@@ -1034,6 +1038,7 @@ class MirrorTrayApp:
             fg=TEXT_COLOR,
             activebackground=CARD_COLOR,
             font=(UI_FONT, 10),
+            command=self.save_form_config_silent,
         )
         clean_check.pack(side="left")
         self.register_i18n(clean_check, "clean_extra")
@@ -1045,6 +1050,7 @@ class MirrorTrayApp:
             fg=TEXT_COLOR,
             activebackground=CARD_COLOR,
             font=(UI_FONT, 10),
+            command=self.save_form_config_silent,
         )
         startup_check.pack(side="left", padx=(22, 0))
         self.register_i18n(startup_check, "startup")
@@ -1070,24 +1076,32 @@ class MirrorTrayApp:
             fg=TEXT_COLOR,
             activebackground=CARD_COLOR,
             font=(UI_FONT, 10),
+            command=self.save_form_config_silent,
         )
         auto_merge_check.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
         self.register_i18n(auto_merge_check, "auto_merge_zzc")
+        self.make_hint(merge_tab, "auto_merge_zzc_hint").grid(
+            row=2,
+            column=0,
+            columnspan=3,
+            sticky="w",
+            pady=(0, 10),
+        )
 
-        self.make_label(merge_tab, "zzc_target_dicts").grid(row=2, column=0, sticky="nw", pady=4)
+        self.make_label(merge_tab, "zzc_target_dicts").grid(row=3, column=0, sticky="nw", pady=4)
         target_box = tk.Frame(merge_tab, bg=CARD_COLOR)
-        target_box.grid(row=2, column=1, sticky="ew", padx=(10, 10), pady=4)
-        self.zzc_target_dicts_text = self.create_rule_text(target_box, height=1)
+        target_box.grid(row=3, column=1, sticky="ew", padx=(10, 10), pady=4)
+        self.zzc_target_dicts_text = self.create_rule_text(target_box, height=5)
         self.pack_rule_text(target_box, self.zzc_target_dicts_text, pady=(0, 6))
         target_buttons = tk.Frame(target_box, bg=CARD_COLOR)
         target_buttons.pack(anchor="w")
         self.make_button(target_buttons, "choose", self.add_zzc_target_dicts, min_width=76).pack(side="left")
         self.make_button(target_buttons, "clear", self.clear_zzc_target_dicts, min_width=62).pack(side="left", padx=(6, 0))
 
-        self.make_label(merge_tab, "merge_interval").grid(row=3, column=0, sticky="w", pady=(8, 3))
+        self.make_label(merge_tab, "merge_interval").grid(row=4, column=0, sticky="w", pady=(8, 3))
         interval_row = tk.Frame(merge_tab, bg=CARD_COLOR)
-        interval_row.grid(row=3, column=1, sticky="w", padx=(10, 0), pady=(8, 3))
-        tk.Spinbox(
+        interval_row.grid(row=4, column=1, sticky="w", padx=(10, 0), pady=(8, 3))
+        self.zzc_merge_interval_spinbox = tk.Spinbox(
             interval_row,
             from_=0,
             to=999,
@@ -1101,7 +1115,9 @@ class MirrorTrayApp:
             highlightthickness=1,
             highlightbackground=BORDER_COLOR,
             highlightcolor=PRIMARY_COLOR,
-        ).pack(side="left")
+        )
+        self.zzc_merge_interval_spinbox.pack(side="left")
+        self.zzc_merge_interval_spinbox.bind("<FocusOut>", self.save_form_config_silent)
         unit_select = ttk.Combobox(
             interval_row,
             textvariable=self.zzc_merge_unit_var,
@@ -1111,10 +1127,13 @@ class MirrorTrayApp:
             font=(UI_FONT, 10),
         )
         unit_select.pack(side="left", padx=(8, 0))
+        unit_select.bind("<<ComboboxSelected>>", self.save_form_config_silent)
 
-        self.make_label(merge_tab, "startup_delay").grid(row=3, column=1, sticky="w", padx=(210, 0), pady=(8, 3))
-        tk.Spinbox(
-            merge_tab,
+        self.make_label(merge_tab, "startup_delay").grid(row=5, column=0, sticky="w", pady=(8, 3))
+        startup_delay_row = tk.Frame(merge_tab, bg=CARD_COLOR)
+        startup_delay_row.grid(row=5, column=1, sticky="w", padx=(10, 0), pady=(8, 3))
+        self.startup_delay_spinbox = tk.Spinbox(
+            startup_delay_row,
             from_=0,
             to=1440,
             textvariable=self.startup_delay_var,
@@ -1127,11 +1146,13 @@ class MirrorTrayApp:
             highlightthickness=1,
             highlightbackground=BORDER_COLOR,
             highlightcolor=PRIMARY_COLOR,
-        ).grid(row=3, column=1, sticky="w", padx=(300, 0), pady=(8, 3))
-        self.make_hint(merge_tab, "minutes").grid(row=3, column=1, sticky="w", padx=(372, 0), pady=(8, 3))
+        )
+        self.startup_delay_spinbox.pack(side="left")
+        self.startup_delay_spinbox.bind("<FocusOut>", self.save_form_config_silent)
+        self.make_hint(startup_delay_row, "minutes").pack(side="left", padx=(8, 0))
 
         checkbox_row = tk.Frame(merge_tab, bg=CARD_COLOR)
-        checkbox_row.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        checkbox_row.grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
         startup_merge_check = tk.Checkbutton(
             checkbox_row,
             text=self.t("startup_auto_merge"),
@@ -1140,6 +1161,7 @@ class MirrorTrayApp:
             fg=TEXT_COLOR,
             activebackground=CARD_COLOR,
             font=(UI_FONT, 10),
+            command=self.save_form_config_silent,
         )
         startup_merge_check.pack(side="left")
         self.register_i18n(startup_merge_check, "startup_auto_merge")
@@ -1152,16 +1174,17 @@ class MirrorTrayApp:
             fg=TEXT_COLOR,
             activebackground=CARD_COLOR,
             font=(UI_FONT, 10),
+            command=self.save_form_config_silent,
         )
         deploy_check.pack(side="left", padx=(24, 0))
         self.register_i18n(deploy_check, "auto_deploy_after_merge")
-        self.make_label(merge_tab, "deploy_command").grid(row=5, column=0, sticky="w", pady=(8, 3))
+        self.make_label(merge_tab, "deploy_command").grid(row=7, column=0, sticky="w", pady=(8, 3))
         self.deploy_command_entry = self.make_entry(
             merge_tab,
             self.deploy_command_var,
             placeholder_key="deploy_command_hint",
         )
-        self.deploy_command_entry.grid(row=5, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=(8, 3))
+        self.deploy_command_entry.grid(row=7, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=(8, 3))
 
         rules_tab.columnconfigure(0, weight=1)
         rules_tab.columnconfigure(1, weight=1)
@@ -1282,6 +1305,7 @@ class MirrorTrayApp:
             self.entry_placeholder_keys[entry] = placeholder_key
             entry.bind("<FocusIn>", lambda _event, input_box=entry: self.clear_entry_placeholder(input_box))
             entry.bind("<FocusOut>", lambda _event, input_box=entry: self.restore_entry_placeholder(input_box))
+        entry.bind("<FocusOut>", self.save_form_config_silent, add="+")
         return entry
 
     def make_path_entry(self, parent: tk.Misc, variable: tk.StringVar | None) -> tk.Entry:
@@ -1334,6 +1358,7 @@ class MirrorTrayApp:
         if folder:
             variable.set(folder.replace("\\", "/"))
             self.show_entry_end(entry)
+            self.save_form_config_silent()
 
     def add_include_file(self) -> None:
         self.add_selected_file(self.include_text)
@@ -1525,6 +1550,8 @@ class MirrorTrayApp:
             box.delete("1.0", "end")
             self.restore_rule_placeholder(box)
             self.root_update()
+            if not self.loading_form:
+                self.save_form_config_silent()
 
     def root_update(self) -> None:
         if self.root is None:
@@ -1703,7 +1730,9 @@ class MirrorTrayApp:
             self.log(f"[error] 保存配置失败: {exc}")
             messagebox.showerror(APP_NAME, f"保存配置失败：{exc}")
 
-    def save_form_config_silent(self) -> None:
+    def save_form_config_silent(self, _event: tk.Event | None = None) -> None:
+        if self.loading_form:
+            return
         try:
             config = self.config_from_form()
             save_config(CONFIG_PATH, config)
@@ -1850,7 +1879,7 @@ class MirrorTrayApp:
         config.target.mkdir(parents=True, exist_ok=True)
         self.set_status("正在同步")
         with self.operation_lock:
-            stats = sync_once(config, logger=self.log)
+            stats = sync_once(self.sync_config_with_auto_merge_protection(config), logger=self.log)
         if stats.has_changes():
             self.log(
                 f"同步完成 copied={stats.copied} "
@@ -1859,6 +1888,23 @@ class MirrorTrayApp:
         self.set_status("同步完成")
         if self.root:
                 self.root.after(1500, lambda: self.set_status("监听中") if self.started and not self.paused else None)
+
+    def sync_config_with_auto_merge_protection(self, config: SyncConfig) -> SyncConfig:
+        if not config.scheduled_tasks.auto_merge_zzc:
+            return config
+        protects = list(config.target_protect)
+        if "*.zzc.dict.yaml" not in protects:
+            protects.append("*.zzc.dict.yaml")
+        return SyncConfig(
+            source=config.source,
+            target=config.target,
+            include=config.include,
+            exclude=config.exclude,
+            target_protect=tuple(protects),
+            interval_seconds=config.interval_seconds,
+            delete_extra=config.delete_extra,
+            scheduled_tasks=config.scheduled_tasks,
+        )
 
     def zzc_files_stable(self, config: SyncConfig) -> bool:
         scheme = find_scheme(config.source)
@@ -2074,7 +2120,7 @@ class MirrorTrayApp:
             save_config(CONFIG_PATH, config)
             self.set_status("正在同步")
             with self.operation_lock:
-                stats = sync_once(config, logger=self.log)
+                stats = sync_once(self.sync_config_with_auto_merge_protection(config), logger=self.log)
             self.set_status("同步完成")
             if self.root:
                 next_status = "监听中" if self.started and not self.paused else self.base_status
