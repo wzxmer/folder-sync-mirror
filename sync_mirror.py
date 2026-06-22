@@ -55,7 +55,7 @@ DEFAULT_CONFIG_TEXT = """{
     // 定时合并天行键自造词。来源文件夹应为 iCloud 方案目录，目标文件夹应为本机 RimeData。
     "auto_merge_zzc": false,
 
-    // 合并写入哪些正式码表，路径相对来源文件夹。留空时自动使用 <方案>.dict.yaml。
+    // 合并写入哪些正式码表，路径相对来源文件夹。必须选择至少一个；新增词写入第一个目标码表。
     "zzc_target_dicts": [],
 
     // 自动合并自造词的最小间隔，单位分钟。
@@ -241,7 +241,7 @@ def format_config_text(config: SyncConfig) -> str:
     // 定时合并天行键自造词。来源文件夹应为 iCloud 方案目录，目标文件夹应为本机 RimeData。
     "auto_merge_zzc": {auto_merge_zzc},
 
-    // 合并写入哪些正式码表，路径相对来源文件夹。留空时自动使用 <方案>.dict.yaml。
+    // 合并写入哪些正式码表，路径相对来源文件夹。必须选择至少一个；新增词写入第一个目标码表。
     "zzc_target_dicts": {zzc_target_dicts},
 
     // 自动合并自造词的最小间隔，单位分钟。
@@ -299,6 +299,8 @@ def ensure_safe_config(config: SyncConfig) -> None:
         raise SystemExit("自造词合并间隔不能小于 0 分钟。")
     if config.scheduled_tasks.startup_delay_minutes < 0:
         raise SystemExit("开机合并等待时间不能小于 0 分钟。")
+    if config.scheduled_tasks.auto_merge_zzc and not config.scheduled_tasks.zzc_target_dicts:
+        raise SystemExit("请先选择自造词合并目标码表。")
 
 
 def is_relative_to(path: Path, parent: Path) -> bool:

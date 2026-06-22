@@ -20,7 +20,6 @@ class ZzcScheme:
     ops: Path
     zzc_dir: Path
     char_dict: Path
-    default_target_dicts: tuple[Path, ...]
     char_parts: Path
     index: Path
     cache_version: Path
@@ -40,11 +39,10 @@ def find_scheme(root: Path) -> ZzcScheme | None:
         ops=ops,
         zzc_dir=zzc_dir,
         char_dict=root / f"{schema}.danzi.dict.yaml",
-        default_target_dicts=(root / f"{schema}.dict.yaml", root / f"{schema}.fjcy.dict.yaml"),
         char_parts=zzc_dir / "char_parts.tsv",
         index=zzc_dir / "index.tsv",
         cache_version=zzc_dir / "cache_version.txt",
-        rollback_logs=zzc_dir / "撤回合并" / "logs",
+        rollback_logs=zzc_dir / "撤回合并",
     )
 
 
@@ -240,12 +238,16 @@ def final_rows_from_ops(ops: list[dict[str, str]]) -> list[tuple[str, str]]:
             continue
         if row["mark"] == "^":
             continue
-        if key in seen or key in deleted:
+        if key in seen or key in deleted or not is_merge_code(key[1]):
             continue
         seen.add(key)
         rows.append(key)
     rows.sort(key=lambda item: (len(item[1]), item[1], item[0]))
     return rows
+
+
+def is_merge_code(code: str) -> bool:
+    return 3 <= len(code) <= 6 and code.isalpha()
 
 
 def latest_order_map(ops: list[dict[str, str]]) -> dict[str, list[str]]:
@@ -296,14 +298,18 @@ def reorder_dict_lines(lines: list[str], order_map: dict[str, list[str]]) -> lis
 def prune_rollback_logs(scheme: ZzcScheme) -> None:
     if not scheme.rollback_logs.exists():
         return
-    logs = sorted([p for p in scheme.rollback_logs.iterdir() if p.is_dir()], key=lambda p: p.name, reverse=True)
+    logs = sorted(
+        [p for p in scheme.rollback_logs.iterdir() if p.is_dir() and p.name.lower() != "logs"],
+        key=lambda p: p.name,
+        reverse=True,
+    )
     for old in logs[KEEP_ROLLBACKS:]:
         shutil.rmtree(old, ignore_errors=True)
 
 
 def resolve_target_dicts(scheme: ZzcScheme, target_dicts: tuple[str, ...] = ()) -> tuple[Path, ...]:
     if not target_dicts:
-        return (scheme.root / f"{scheme.schema}.dict.yaml",)
+        return ()
     out: list[Path] = []
     for item in target_dicts:
         path = Path(item)
@@ -311,6 +317,49 @@ def resolve_target_dicts(scheme: ZzcScheme, target_dicts: tuple[str, ...] = ()) 
             path = scheme.root / item
         out.append(path)
     return tuple(out)
+
+
+def dict_code_at(lines: list[str], index: int) -> str | None:
+    row = parse_dict_row(lines[index])
+    if not row or not is_merge_code(row[1]):
+        return None
+    return row[1]
+
+
+def find_insert_index(lines: list[str], code: str) -> int:
+    valid_indexes: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        row = parse_dict_row(line)
+        if row and is_merge_code(row[1]):
+            valid_indexes.append((index, row[1]))
+    if not valid_indexes:
+        return len(lines)
+
+    same_indexes = [index for index, row_code in valid_indexes if row_code == code]
+    if same_indexes:
+        return same_indexes[0]
+
+    previous_code = ""
+    for _, row_code in valid_indexes:
+        if row_code < code and row_code > previous_code:
+            previous_code = row_code
+
+    if previous_code:
+        insert_after = max(index for index, row_code in valid_indexes if row_code == previous_code)
+        index = insert_after + 1
+        while index < len(lines) and dict_code_at(lines, index) == previous_code:
+            index += 1
+        return index
+
+    return valid_indexes[0][0]
+
+
+def insert_rows_by_code(lines: list[str], rows: list[tuple[str, str]]) -> list[str]:
+    out = list(lines)
+    for word, code in sorted(rows, key=lambda item: (item[1], item[0])):
+        index = find_insert_index(out, code)
+        out.insert(index, f"{word}\t{code}")
+    return out
 
 
 def create_rollback_log(scheme: ZzcScheme, ops_count: int, keep_count: int, target_dicts: tuple[Path, ...]) -> Path:
@@ -356,11 +405,11 @@ def merge_into_real_dicts(scheme: ZzcScheme, target_dicts: tuple[Path, ...], ops
         kept = reorder_dict_lines(kept, order_map)
         write_text(path, "\n".join(kept) + "\n")
         logger(f"[zzc] 已整理 {path.name}，移除 {removed} 条")
-    target = target_dicts[0] if target_dicts else scheme.root / f"{scheme.schema}.dict.yaml"
-    if target.exists() and keep_rows:
-        with target.open("a", encoding="utf-8", newline="\n") as handle:
-            for word, code in keep_rows:
-                handle.write(f"{word}\t{code}\n")
+    target = target_dicts[0] if target_dicts else None
+    if target is not None and target.exists() and keep_rows:
+        lines = read_text(target).splitlines()
+        lines = insert_rows_by_code(lines, keep_rows)
+        write_text(target, "\n".join(lines) + "\n")
         logger(f"[zzc] 已写入最终 zzc 词条：{target.name}，{len(keep_rows)} 条")
 
 
@@ -390,6 +439,8 @@ def merge_root(root: Path, target_dicts: tuple[str, ...] = (), logger=print) -> 
         logger(f"[zzc] 未找到 *.zzc.dict.yaml：{root}")
         return False
     resolved_targets = resolve_target_dicts(scheme, target_dicts)
+    if not resolved_targets:
+        raise ValueError("请先选择合并目标码表。")
     missing = [path for path in resolved_targets if not path.exists()]
     if missing:
         raise FileNotFoundError("合并目标码表不存在：" + "，".join(str(path) for path in missing))
