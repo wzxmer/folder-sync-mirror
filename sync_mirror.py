@@ -13,17 +13,19 @@ import shutil
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+from task_scheduler import TaskDefinition, TaskScheduler, build_task_definition
 from version import __version__
 
 
 DEFAULT_INTERVAL_SECONDS = 0.0
+AUTO_MERGE_TARGET_PROTECT = ("*.zzc.dict.yaml", "zzc_state/zzc_reset.tsv")
 DEFAULT_CONFIG_TEXT = """{
   // 来源文件夹：同步来源。请改成你的来源路径。
   "source": "",
@@ -44,18 +46,25 @@ DEFAULT_CONFIG_TEXT = """{
   // 被 target_protect 命中的内容不会被覆盖，也不会因为目标与来源不一致而被自动删除。
   "target_protect": [],
 
+  // 目标中哪些位置允许自动清理多余内容。
+  // 留空 [] 表示允许清理整个目标；填写 "zzc_state/**" 表示只清理目标 zzc_state 文件夹。
+  "target_clean": [],
+
   // 来源内容变动后延迟多少秒再同步。0 表示立即同步。
   "interval_seconds": 0,
 
   // 是否删除目标中多出的文件，让目标与来源中被选择同步的内容一致。
   "delete_extra": true,
 
+  // 任务列表。留空时兼容旧单任务配置。
+  "tasks": [],
+
   // 定时任务。
   "scheduled_tasks": {
-    // 定时合并天行键自造词。来源文件夹应为 iCloud 方案目录，目标文件夹应为本机 RimeData。
+    // 定时合并天行键自造词。兼容旧配置时，会用本机目标目录的 zzc 合并到来源目录的正式码表。
     "auto_merge_zzc": false,
 
-    // 合并写入哪些正式码表，路径相对来源文件夹。必须选择至少一个；新增词写入第一个目标码表。
+    // 合并写入哪些正式码表，路径相对合并任务目标文件夹。必须选择至少一个；新增词写入第一个目标码表。
     "zzc_target_dicts": [],
 
     // 自动合并自造词的最小间隔，单位分钟。
@@ -89,14 +98,32 @@ class ScheduledTasksConfig:
 
 
 @dataclass(frozen=True)
+class TaskSpec:
+    id: str
+    name: str
+    enabled: bool
+    source: Path
+    target: Path
+    include: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+    target_protect: tuple[str, ...] = ()
+    target_clean: tuple[str, ...] = ()
+    delete_extra: bool = True
+    interval_seconds: float = 0.0
+    scheduled_tasks: ScheduledTasksConfig | None = None
+
+
+@dataclass(frozen=True)
 class SyncConfig:
     source: Path
     target: Path
     include: tuple[str, ...]
     exclude: tuple[str, ...]
     target_protect: tuple[str, ...]
+    target_clean: tuple[str, ...]
     interval_seconds: float
     delete_extra: bool
+    tasks: tuple[TaskSpec, ...]
     scheduled_tasks: ScheduledTasksConfig
 
 
@@ -131,19 +158,18 @@ def load_config(config_path: Path) -> SyncConfig:
     except json.JSONDecodeError as exc:
         raise SystemExit(f"配置文件格式错误: {exc}") from exc
 
-    try:
-        source_text = str(data["source"]).strip()
-        target_text = str(data["target"]).strip()
-        source = Path(source_text).expanduser() if source_text else Path()
-        target = Path(target_text).expanduser() if target_text else Path()
-    except KeyError as exc:
-        raise SystemExit(f"配置缺少必填字段: {exc.args[0]}") from exc
+    source_text = str(data.get("source", "")).strip()
+    target_text = str(data.get("target", "")).strip()
+    source = Path(source_text).expanduser() if source_text else Path()
+    target = Path(target_text).expanduser() if target_text else Path()
 
     include = normalize_patterns(data.get("include", []))
     exclude = normalize_patterns(data.get("exclude", []))
     target_protect = normalize_patterns(data.get("target_protect", []))
+    target_clean = normalize_patterns(data.get("target_clean", []))
     interval_seconds = float(data.get("interval_seconds", DEFAULT_INTERVAL_SECONDS))
     delete_extra = bool(data.get("delete_extra", True))
+    tasks = parse_tasks(data.get("tasks", []))
     scheduled_data = data.get("scheduled_tasks", {})
     if not isinstance(scheduled_data, dict):
         scheduled_data = {}
@@ -156,6 +182,18 @@ def load_config(config_path: Path) -> SyncConfig:
         auto_deploy_after_merge=bool(scheduled_data.get("auto_deploy_after_merge", False)),
         deploy_command=str(scheduled_data.get("deploy_command", "")).strip(),
     )
+    if not tasks:
+        tasks = default_tasks_from_legacy(
+            source=source,
+            target=target,
+            include=include,
+            exclude=exclude,
+            target_protect=target_protect,
+            target_clean=target_clean,
+            interval_seconds=interval_seconds,
+            delete_extra=delete_extra,
+            scheduled_tasks=scheduled_tasks,
+        )
 
     return SyncConfig(
         source=source.resolve() if source_text else source,
@@ -163,8 +201,10 @@ def load_config(config_path: Path) -> SyncConfig:
         include=include,
         exclude=exclude,
         target_protect=target_protect,
+        target_clean=target_clean,
         interval_seconds=interval_seconds,
         delete_extra=delete_extra,
+        tasks=tasks,
         scheduled_tasks=scheduled_tasks,
     )
 
@@ -188,6 +228,8 @@ def strip_json_comments(text: str) -> str:
 
 
 def normalize_patterns(patterns: Iterable[str]) -> tuple[str, ...]:
+    if isinstance(patterns, str):
+        return (patterns.replace("\\", "/"),)
     return tuple(str(item).replace("\\", "/") for item in patterns)
 
 
@@ -198,10 +240,96 @@ def create_default_config(config_path: Path) -> None:
     )
 
 
+def default_tasks_from_legacy(
+    *,
+    source: Path,
+    target: Path,
+    include: tuple[str, ...],
+    exclude: tuple[str, ...],
+    target_protect: tuple[str, ...],
+    target_clean: tuple[str, ...],
+    interval_seconds: float,
+    delete_extra: bool,
+    scheduled_tasks: ScheduledTasksConfig,
+) -> tuple[TaskSpec, ...]:
+    tasks = [
+        TaskSpec(
+            id="sync",
+            name="同步任务",
+            enabled=True,
+            source=source,
+            target=target,
+            include=include,
+            exclude=exclude,
+            target_protect=target_protect,
+            target_clean=target_clean,
+            delete_extra=delete_extra,
+            interval_seconds=interval_seconds,
+            scheduled_tasks=scheduled_tasks,
+        )
+    ]
+    return tuple(tasks)
+
+
+def parse_tasks(tasks_data: object) -> tuple[TaskSpec, ...]:
+    if not isinstance(tasks_data, list):
+        return ()
+    tasks: list[TaskSpec] = []
+    used_ids: set[str] = set()
+    for index, item in enumerate(tasks_data, start=1):
+        if isinstance(item, dict):
+            task = parse_task_spec(item, default_id=f"task-{index}")
+            if task.id in used_ids:
+                task = replace(task, id=f"{task.id}-{index}")
+            used_ids.add(task.id)
+            tasks.append(task)
+    return tuple(tasks)
+
+
+def parse_task_spec(item: dict[str, object], default_id: str = "task") -> TaskSpec:
+    source_text = str(item.get("source", "")).strip()
+    target_text = str(item.get("target", "")).strip()
+    source = Path(source_text).expanduser() if source_text else Path()
+    target = Path(target_text).expanduser() if target_text else Path()
+    scheduled_data = item.get("scheduled_tasks", {})
+    if not isinstance(scheduled_data, dict):
+        scheduled_data = {}
+    scheduled_tasks = None
+    if scheduled_data:
+        scheduled_tasks = ScheduledTasksConfig(
+            auto_merge_zzc=bool(scheduled_data.get("auto_merge_zzc", False)),
+            zzc_target_dicts=normalize_patterns(scheduled_data.get("zzc_target_dicts", [])),
+            zzc_merge_interval_minutes=float(scheduled_data.get("zzc_merge_interval_minutes", 30)),
+            startup_auto_merge=bool(scheduled_data.get("startup_auto_merge", False)),
+            startup_delay_minutes=float(scheduled_data.get("startup_delay_minutes", 10)),
+            auto_deploy_after_merge=bool(scheduled_data.get("auto_deploy_after_merge", False)),
+            deploy_command=str(scheduled_data.get("deploy_command", "")).strip(),
+        )
+    trigger_data = item.get("trigger", {})
+    if not isinstance(trigger_data, dict):
+        trigger_data = {}
+    interval_seconds = float(item.get("interval_seconds", trigger_data.get("interval_seconds", 0.0)))
+    return TaskSpec(
+        id=str(item.get("id", "")).strip() or default_id,
+        name=str(item.get("name", "")).strip() or "任务",
+        enabled=bool(item.get("enabled", True)),
+        source=source.resolve() if source_text else source,
+        target=target.resolve() if target_text else target,
+        include=normalize_patterns(item.get("include", [])),
+        exclude=normalize_patterns(item.get("exclude", [])),
+        target_protect=normalize_patterns(item.get("target_protect", [])),
+        target_clean=normalize_patterns(item.get("target_clean", [])),
+        delete_extra=bool(item.get("delete_extra", True)),
+        interval_seconds=interval_seconds,
+        scheduled_tasks=scheduled_tasks,
+    )
+
+
 def format_config_text(config: SyncConfig) -> str:
     include_text = format_pattern_list(config.include)
     exclude_text = format_pattern_list(config.exclude)
     target_protect_text = format_pattern_list(config.target_protect)
+    target_clean_text = format_pattern_list(config.target_clean)
     delete_extra = "true" if config.delete_extra else "false"
     auto_merge_zzc = "true" if config.scheduled_tasks.auto_merge_zzc else "false"
     zzc_target_dicts = format_pattern_list(config.scheduled_tasks.zzc_target_dicts)
@@ -230,18 +358,25 @@ def format_config_text(config: SyncConfig) -> str:
   // 被 target_protect 命中的内容不会被覆盖，也不会因为目标与来源不一致而被自动删除。
   "target_protect": {target_protect_text},
 
+  // 目标中哪些位置允许自动清理多余内容。
+  // 留空 [] 表示允许清理整个目标；填写 "zzc_state/**" 表示只清理目标 zzc_state 文件夹。
+  "target_clean": {target_clean_text},
+
   // 来源内容变动后延迟多少秒再同步。0 表示立即同步。
   "interval_seconds": {config.interval_seconds:g},
 
   // 是否删除目标中多出的文件，让目标与来源中被选择同步的内容一致。
   "delete_extra": {delete_extra},
 
+  // 任务列表。每个任务可独立启用。
+  "tasks": {format_task_list(config.tasks)},
+
   // 定时任务。
   "scheduled_tasks": {{
-    // 定时合并天行键自造词。来源文件夹应为 iCloud 方案目录，目标文件夹应为本机 RimeData。
+    // 定时合并天行键自造词。兼容旧配置时，会用本机目标目录的 zzc 合并到来源目录的正式码表。
     "auto_merge_zzc": {auto_merge_zzc},
 
-    // 合并写入哪些正式码表，路径相对来源文件夹。必须选择至少一个；新增词写入第一个目标码表。
+    // 合并写入哪些正式码表，路径相对合并任务目标文件夹。必须选择至少一个；新增词写入第一个目标码表。
     "zzc_target_dicts": {zzc_target_dicts},
 
     // 自动合并自造词的最小间隔，单位分钟。
@@ -280,7 +415,51 @@ def format_pattern_list(patterns: Iterable[str]) -> str:
     return f"[\n    {body}\n  ]"
 
 
+def format_task_list(tasks: Iterable[TaskSpec]) -> str:
+    items = [format_task_spec(task) for task in tasks]
+    if not items:
+        return "[]"
+    body = ",\n    ".join(items)
+    return f"[\n    {body}\n  ]"
+
+
+def format_task_spec(task: TaskSpec) -> str:
+    payload: dict[str, object] = {
+        "id": task.id,
+        "name": task.name,
+        "enabled": task.enabled,
+        "source": "" if is_empty_path(task.source) else task.source.as_posix(),
+        "target": "" if is_empty_path(task.target) else task.target.as_posix(),
+        "include": list(task.include),
+        "exclude": list(task.exclude),
+        "target_protect": list(task.target_protect),
+        "target_clean": list(task.target_clean),
+        "delete_extra": task.delete_extra,
+        "interval_seconds": task.interval_seconds,
+    }
+    if task.scheduled_tasks is not None:
+        payload["scheduled_tasks"] = {
+            "auto_merge_zzc": task.scheduled_tasks.auto_merge_zzc,
+            "zzc_target_dicts": list(task.scheduled_tasks.zzc_target_dicts),
+            "zzc_merge_interval_minutes": task.scheduled_tasks.zzc_merge_interval_minutes,
+            "startup_auto_merge": task.scheduled_tasks.startup_auto_merge,
+            "startup_delay_minutes": task.scheduled_tasks.startup_delay_minutes,
+            "auto_deploy_after_merge": task.scheduled_tasks.auto_deploy_after_merge,
+            "deploy_command": task.scheduled_tasks.deploy_command,
+        }
+    return json.dumps(payload, ensure_ascii=False, indent=2).replace("\n", "\n    ")
+
+
 def ensure_safe_config(config: SyncConfig) -> None:
+    if config.tasks:
+        enabled_ids: set[str] = set()
+        for task in config.tasks:
+            if task.enabled:
+                if task.id in enabled_ids:
+                    raise SystemExit(f"任务 id 重复: {task.id}")
+                enabled_ids.add(task.id)
+                ensure_safe_task(task)
+        return
     if is_empty_path(config.source) or is_empty_path(config.target):
         raise SystemExit("请先选择来源文件夹和目标文件夹。")
     if not config.source.exists():
@@ -301,6 +480,44 @@ def ensure_safe_config(config: SyncConfig) -> None:
         raise SystemExit("开机合并等待时间不能小于 0 分钟。")
     if config.scheduled_tasks.auto_merge_zzc and not config.scheduled_tasks.zzc_target_dicts:
         raise SystemExit("请先选择自造词合并目标码表。")
+    tasks = default_tasks_from_legacy(
+        source=config.source,
+        target=config.target,
+        include=config.include,
+        exclude=config.exclude,
+        target_protect=config.target_protect,
+        target_clean=config.target_clean,
+        interval_seconds=config.interval_seconds,
+        delete_extra=config.delete_extra,
+        scheduled_tasks=config.scheduled_tasks,
+    )
+    for task in tasks:
+        ensure_safe_task(task)
+
+
+def ensure_safe_task(task: TaskSpec) -> None:
+    if is_empty_path(task.source) or is_empty_path(task.target):
+        raise SystemExit(f"任务 {task.id} 缺少来源文件夹或目标文件夹。")
+    if not task.source.exists():
+        raise SystemExit(f"任务 {task.id} 的来源文件夹不存在: {task.source}")
+    if not task.source.is_dir():
+        raise SystemExit(f"任务 {task.id} 的来源路径不是文件夹: {task.source}")
+    if task.source == task.target:
+        raise SystemExit(f"任务 {task.id} 的来源文件夹和目标文件夹不能是同一个目录。")
+    if is_relative_to(task.target, task.source):
+        raise SystemExit(f"任务 {task.id} 的目标文件夹不能放在来源文件夹内部。")
+    if is_relative_to(task.source, task.target):
+        raise SystemExit(f"任务 {task.id} 的来源文件夹不能放在目标文件夹内部。")
+    if task.interval_seconds < 0:
+        raise SystemExit(f"任务 {task.id} 的触发延迟不能小于 0 秒。")
+    scheduled = task.scheduled_tasks
+    if scheduled is not None:
+        if scheduled.zzc_merge_interval_minutes < 0:
+            raise SystemExit(f"任务 {task.id} 的自造词合并间隔不能小于 0 分钟。")
+        if scheduled.startup_delay_minutes < 0:
+            raise SystemExit(f"任务 {task.id} 的开机合并等待时间不能小于 0 分钟。")
+        if scheduled.auto_merge_zzc and not scheduled.zzc_target_dicts:
+            raise SystemExit(f"任务 {task.id} 请先选择自造词合并目标码表。")
 
 
 def is_relative_to(path: Path, parent: Path) -> bool:
@@ -436,10 +653,19 @@ def copy_file(source_file: Path, target_file: Path) -> None:
     temp_file.replace(target_file)
 
 
-def delete_extra_targets(config: SyncConfig, desired_files: set[str]) -> int:
+def delete_target_file(path: Path) -> None:
+    try:
+        path.unlink()
+    except PermissionError:
+        os.chmod(path, 0o666)
+        path.unlink()
+
+
+def delete_extra_targets(config: SyncConfig, desired_files: set[str], logger=print) -> tuple[int, int]:
     deleted = 0
+    errors = 0
     if not config.target.exists():
-        return deleted
+        return deleted, errors
 
     for root, dir_names, file_names in os.walk(config.target, topdown=False):
         root_path = Path(root)
@@ -449,14 +675,22 @@ def delete_extra_targets(config: SyncConfig, desired_files: set[str]) -> int:
             rel = relative_posix(target_file, config.target)
             if rel in desired_files:
                 continue
+            if not should_clean_target(rel, config):
+                continue
             if is_excluded(rel, config.target_protect):
                 continue
-            target_file.unlink()
-            deleted += 1
+            try:
+                delete_target_file(target_file)
+                deleted += 1
+            except OSError as exc:
+                errors += 1
+                logger(f"[error] 删除目标文件失败 {rel}: {exc}")
 
         for dir_name in dir_names:
             target_dir = root_path / dir_name
             rel = relative_posix(target_dir, config.target)
+            if not should_clean_target(rel, config):
+                continue
             if is_excluded(rel, config.target_protect):
                 continue
             try:
@@ -464,7 +698,11 @@ def delete_extra_targets(config: SyncConfig, desired_files: set[str]) -> int:
             except OSError:
                 pass
 
-    return deleted
+    return deleted, errors
+
+
+def should_clean_target(relative_path: str, config: SyncConfig) -> bool:
+    return not config.target_clean or matches_any(relative_path, config.target_clean)
 
 
 def sync_once(config: SyncConfig, dry_run: bool = False, logger=print) -> SyncStats:
@@ -498,7 +736,9 @@ def sync_once(config: SyncConfig, dry_run: bool = False, logger=print) -> SyncSt
                     print(f"[dry-run] delete {rel}")
                 stats.deleted += len(extras)
             else:
-                stats.deleted += delete_extra_targets(config, desired_files)
+                deleted, errors = delete_extra_targets(config, desired_files, logger=logger)
+                stats.deleted += deleted
+                stats.errors += errors
         except OSError as exc:
             stats.errors += 1
             logger(f"[error] 清理目标文件夹失败: {exc}")
@@ -518,6 +758,7 @@ def preview_extra_targets(config: SyncConfig, desired_files: set[str]) -> list[s
             rel = relative_posix(target_file, config.target)
             if (
                 rel not in desired_files
+                and should_clean_target(rel, config)
                 and not is_excluded(rel, config.target_protect)
             ):
                 extras.append(rel)
@@ -532,8 +773,133 @@ def print_stats(prefix: str, stats: SyncStats) -> None:
     )
 
 
+def sync_config_for_task(config: SyncConfig, task: TaskSpec) -> SyncConfig:
+    scheduled_tasks = task.scheduled_tasks or config.scheduled_tasks
+    target_protect = list(task.target_protect)
+    if task_uses_auto_merge_protection(config, task):
+        append_auto_merge_protects(target_protect)
+    return SyncConfig(
+        source=task.source,
+        target=task.target,
+        include=task.include,
+        exclude=task.exclude,
+        target_protect=tuple(target_protect),
+        target_clean=task.target_clean,
+        interval_seconds=task.interval_seconds,
+        delete_extra=task.delete_extra,
+        tasks=config.tasks,
+        scheduled_tasks=scheduled_tasks,
+    )
+
+
+def task_uses_auto_merge_protection(config: SyncConfig, task: TaskSpec) -> bool:
+    scheduled = task.scheduled_tasks or config.scheduled_tasks
+    return scheduled.auto_merge_zzc
+
+
+def append_auto_merge_protects(patterns: list[str]) -> None:
+    for pattern in AUTO_MERGE_TARGET_PROTECT:
+        if pattern not in patterns:
+            patterns.append(pattern)
+
+
+def paths_overlap(left: Path, right: Path) -> bool:
+    left_resolved = left.resolve()
+    right_resolved = right.resolve()
+    return (
+        left_resolved == right_resolved
+        or is_relative_to(left_resolved, right_resolved)
+        or is_relative_to(right_resolved, left_resolved)
+    )
+
+
+def sync_tasks_once(config: SyncConfig, dry_run: bool = False, logger=print) -> SyncStats:
+    total = SyncStats()
+    tasks = [task for task in config.tasks if task.enabled]
+    if config.tasks and not tasks:
+        return total
+    if not tasks:
+        tasks = [
+            TaskSpec(
+                id="sync",
+                name="同步任务",
+                enabled=True,
+                source=config.source,
+                target=config.target,
+                include=config.include,
+                exclude=config.exclude,
+                target_protect=config.target_protect,
+                target_clean=config.target_clean,
+                interval_seconds=config.interval_seconds,
+                delete_extra=config.delete_extra,
+            )
+        ]
+    stats_by_id: dict[str, SyncStats] = {}
+    task_by_id = {task.id: task for task in tasks}
+
+    def run_task(task_def: TaskDefinition) -> bool:
+        task = task_by_id[task_def.id]
+        task_config = sync_config_for_task(config, task)
+        if not dry_run:
+            task_config.target.mkdir(parents=True, exist_ok=True)
+        stats = sync_once(task_config, dry_run=dry_run, logger=logger)
+        stats_by_id[task.id] = stats
+        return stats.errors == 0
+
+    scheduler = TaskScheduler()
+    task_defs = tuple(build_task_definition(task) for task in tasks)
+    scheduler.run(task_defs, run_task)
+
+    for task in tasks:
+        stats = stats_by_id.get(task.id, SyncStats(errors=1))
+        if task.id not in stats_by_id:
+            logger(f"[error] 任务未完成 {task.id}")
+        print_stats(f"任务 {task.name or task.id} 完成", stats)
+        total.copied += stats.copied
+        total.deleted += stats.deleted
+        total.skipped += stats.skipped
+        total.errors += stats.errors
+    return total
+
+
+def sync_task_sources(config: SyncConfig) -> tuple[Path, ...]:
+    tasks = [task for task in config.tasks if task.enabled]
+    if config.tasks and not tasks:
+        return ()
+    if not tasks:
+        return (config.source,)
+    sources = {_normalize_watch_path(task.source) for task in tasks}
+    return tuple(sorted(sources, key=lambda path: path.as_posix().lower()))
+
+
+def sync_task_watch_paths(config: SyncConfig) -> tuple[Path, ...]:
+    tasks = [task for task in config.tasks if task.enabled]
+    if config.tasks and not tasks:
+        return ()
+    if not tasks:
+        paths = {_normalize_watch_path(config.source)}
+        if config.delete_extra and config.target.exists():
+            paths.add(_normalize_watch_path(config.target))
+        return tuple(sorted(paths, key=lambda path: path.as_posix().lower()))
+
+    paths = set()
+    for task in tasks:
+        paths.add(_normalize_watch_path(task.source))
+        if task.delete_extra and task.target.exists():
+            paths.add(_normalize_watch_path(task.target))
+    return tuple(sorted(paths, key=lambda path: path.as_posix().lower()))
+
+
+def _normalize_watch_path(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
 def watch(config: SyncConfig) -> None:
-    print(f"来源文件夹: {config.source}")
+    sources = sync_task_watch_paths(config)
+    print(f"来源文件夹: {', '.join(path.as_posix() for path in sources)}")
     print(f"目标文件夹: {config.target}")
     print(f"只同步规则: {', '.join(config.include) if config.include else '全部'}")
     print(f"来源排除规则: {', '.join(config.exclude) if config.exclude else '无'}")
@@ -547,10 +913,11 @@ def watch(config: SyncConfig) -> None:
         changed.set()
 
     observer = Observer()
-    observer.schedule(SyncChangeHandler(mark_changed), str(config.source), recursive=True)
+    for source in sources:
+        observer.schedule(SyncChangeHandler(mark_changed), str(source), recursive=True)
     observer.start()
     try:
-        stats = sync_once(config)
+        stats = sync_tasks_once(config)
         print_stats("首次同步完成", stats)
         while True:
             changed.wait()
@@ -563,7 +930,7 @@ def watch(config: SyncConfig) -> None:
                 if changed.is_set():
                     changed.clear()
                     deadline = time.monotonic() + delay
-            stats = sync_once(config)
+            stats = sync_tasks_once(config)
             print_stats("同步完成", stats)
     finally:
         observer.stop()
@@ -605,7 +972,7 @@ def main() -> int:
     config.target.mkdir(parents=True, exist_ok=True)
 
     if args.once or args.dry_run:
-        stats = sync_once(config, dry_run=args.dry_run)
+        stats = sync_tasks_once(config, dry_run=args.dry_run)
         print(
             f"完成: copied={stats.copied} deleted={stats.deleted} "
             f"skipped={stats.skipped} errors={stats.errors}"

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import shutil
+import secrets
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -19,10 +20,16 @@ class ZzcScheme:
     schema: str
     ops: Path
     zzc_dir: Path
+    state_dir: Path
     char_dict: Path
     char_parts: Path
     index: Path
+    runtime_ops: Path
+    runtime_exact: Path
+    effective_state: Path
     cache_version: Path
+    reset_marker: Path
+    reset_seen: Path
     rollback_logs: Path
 
 
@@ -33,15 +40,22 @@ def find_scheme(root: Path) -> ZzcScheme | None:
     ops = matches[0]
     schema = ops.name.removesuffix(".zzc.dict.yaml")
     zzc_dir = root / "zzc"
+    state_dir = root / "zzc_state"
     return ZzcScheme(
         root=root,
         schema=schema,
         ops=ops,
         zzc_dir=zzc_dir,
+        state_dir=state_dir,
         char_dict=root / f"{schema}.danzi.dict.yaml",
-        char_parts=zzc_dir / "char_parts.tsv",
-        index=zzc_dir / "index.tsv",
-        cache_version=zzc_dir / "cache_version.txt",
+        char_parts=state_dir / "char_parts.tsv",
+        index=state_dir / "index.tsv",
+        runtime_ops=state_dir / "runtime_ops.tsv",
+        runtime_exact=state_dir / "runtime_exact.tsv",
+        effective_state=state_dir / "effective_state.tsv",
+        cache_version=state_dir / "cache_version.tsv",
+        reset_marker=state_dir / "zzc_reset.tsv",
+        reset_seen=state_dir / "zzc_reset_seen.tsv",
         rollback_logs=zzc_dir / "撤回合并",
     )
 
@@ -82,6 +96,17 @@ def parse_ops_line(line: str) -> dict[str, str] | None:
         return None
 
     parts = text.split("\t")
+    if len(parts) == 5:
+        tx, op, word, code, mark_token = [part.strip() for part in parts]
+        mark = mark_token[:1]
+        if op and word and code and mark in {"+", "-", "!", "^"}:
+            row = {"tx": tx, "op": op, "mark": mark, "word": word, "code": code}
+            if mark_token == "+a":
+                row["append"] = "1"
+            if mark_token == "+r" or op == "restore":
+                row["restore"] = "1"
+            return row
+
     if len(parts) >= 2:
         word = parts[0].strip()
         code_part = parts[1].strip()
@@ -95,12 +120,14 @@ def parse_ops_line(line: str) -> dict[str, str] | None:
                 row = {"mark": mark, "word": word, "code": code}
                 if mark_token == "+a":
                     row["append"] = "1"
+                if mark_token == "+r":
+                    row["restore"] = "1"
                 if len(comment_parts) >= 2 and comment_parts[1].isdigit():
                     row["tx"] = comment_parts[1]
                 return row
 
     if len(parts) == 3:
-        mark, word, code = parts
+        mark, word, code = [part.strip() for part in parts]
         if mark in {"+", "-", "!", "^"} and word and code:
             return {"mark": mark, "word": word, "code": code}
     return None
@@ -126,7 +153,7 @@ def ops_header(schema: str) -> str:
 
 def format_ops_row(row: dict[str, str]) -> str:
     mark = row["mark"]
-    mark_token = "+a" if mark == "+" and row.get("append") else mark
+    mark_token = "+a" if mark == "+" and row.get("append") else "+r" if mark == "+" and row.get("restore") else mark
     comment = mark_token
     if row.get("tx"):
         comment += f" {row['tx']}"
@@ -137,6 +164,8 @@ def load_ops(scheme: ZzcScheme) -> list[dict[str, str]]:
     ops: list[dict[str, str]] = []
     sources = (
         scheme.ops,
+        scheme.runtime_ops,
+        scheme.zzc_dir / "runtime_ops.tsv",
         scheme.root / f"{scheme.schema}.zzc.ops.tsv",
         scheme.zzc_dir / "ops.tsv",
         scheme.zzc_dir / "pending.tsv",
@@ -157,6 +186,7 @@ def row_key(row: dict[str, str]) -> tuple[str, str, str, str, str]:
         row.get("word", ""),
         row.get("code", ""),
         row.get("append", ""),
+        row.get("restore", ""),
         row.get("tx", ""),
     )
 
@@ -166,6 +196,8 @@ def write_ops(scheme: ZzcScheme, ops: list[dict[str, str]]) -> None:
     write_text(scheme.ops, ops_header(scheme.schema) + (body + "\n" if body else ""))
     for legacy in (
         scheme.root / f"{scheme.schema}.zzc.ops.tsv",
+        scheme.runtime_ops,
+        scheme.zzc_dir / "runtime_ops.tsv",
         scheme.zzc_dir / "ops.tsv",
         scheme.zzc_dir / "pending.tsv",
     ):
@@ -229,28 +261,45 @@ def rebuild_char_parts(scheme: ZzcScheme) -> int:
 
 def final_rows_from_ops(ops: list[dict[str, str]]) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    deleted: set[tuple[str, str]] = set()
-    for row in reversed(ops):
-        key = (row["word"], row["code"])
-        if row["mark"] == "!":
-            deleted.add(key)
+    latest = latest_state_by_word_code(ops)
+    for key, row in latest.items():
+        if row["mark"] == "!" or not is_merge_code(key[1]):
             continue
-        if row["mark"] == "^":
+        if row.get("restore") and not has_prior_add_fact(ops, key, row):
             continue
-        if key in seen or key in deleted or not is_merge_code(key[1]):
-            continue
-        seen.add(key)
         rows.append(key)
     rows.sort(key=lambda item: (len(item[1]), item[1], item[0]))
     return rows
 
 
+def latest_state_by_word_code(ops: list[dict[str, str]]) -> dict[tuple[str, str], dict[str, str]]:
+    latest: dict[tuple[str, str], dict[str, str]] = {}
+    for row in reversed(ops):
+        key = (row["word"], row["code"])
+        if row["mark"] == "^" or key in latest:
+            continue
+        latest[key] = row
+    return latest
+
+
+def has_prior_add_fact(ops: list[dict[str, str]], key: tuple[str, str], latest: dict[str, str]) -> bool:
+    for row in ops:
+        row_key = (row["word"], row["code"])
+        if row is latest:
+            break
+        if row_key != key or row["mark"] == "^":
+            continue
+        if row["mark"] in {"+", "-"} and not row.get("restore"):
+            return True
+    return False
+
+
 def is_merge_code(code: str) -> bool:
-    return 3 <= len(code) <= 6 and code.isalpha()
+    return 3 <= len(code) <= 6 and code.isalpha() and code.islower()
 
 
 def latest_order_map(ops: list[dict[str, str]]) -> dict[str, list[str]]:
+    latest_state = latest_state_by_word_code(ops)
     latest_tx_by_code: dict[str, str] = {}
     for row in ops:
         if row["mark"] == "^" and row.get("tx"):
@@ -260,12 +309,41 @@ def latest_order_map(ops: list[dict[str, str]]) -> dict[str, list[str]]:
     for row in ops:
         if row["mark"] != "^" or latest_tx_by_code.get(row["code"]) != row.get("tx"):
             continue
+        state = latest_state.get((row["word"], row["code"]))
+        if not state or state["mark"] == "!":
+            continue
         seen = seen_by_code.setdefault(row["code"], set())
         if row["word"] in seen:
             continue
         seen.add(row["word"])
         order_map.setdefault(row["code"], []).append(row["word"])
     return order_map
+
+
+def compact_ops(ops: list[dict[str, str]]) -> list[dict[str, str]]:
+    latest = latest_state_by_word_code(ops)
+    latest_order_tx_by_code: dict[str, str] = {}
+    for row in ops:
+        if row["mark"] == "^" and row.get("tx"):
+            latest_order_tx_by_code[row["code"]] = row["tx"]
+
+    out: list[dict[str, str]] = []
+    for row in ops:
+        key = (row["word"], row["code"])
+        if row["mark"] != "^" and latest.get(key) is row:
+            out.append(row)
+
+    seen_order: set[tuple[str, str]] = set()
+    for row in ops:
+        if row["mark"] != "^" or latest_order_tx_by_code.get(row["code"]) != row.get("tx"):
+            continue
+        key = (row["word"], row["code"])
+        state = latest.get(key)
+        if not state or state["mark"] == "!" or key in seen_order:
+            continue
+        seen_order.add(key)
+        out.append(row)
+    return out
 
 
 def reorder_dict_lines(lines: list[str], order_map: dict[str, list[str]]) -> list[str]:
@@ -307,14 +385,19 @@ def prune_rollback_logs(scheme: ZzcScheme) -> None:
         shutil.rmtree(old, ignore_errors=True)
 
 
-def resolve_target_dicts(scheme: ZzcScheme, target_dicts: tuple[str, ...] = ()) -> tuple[Path, ...]:
+def resolve_target_dicts(
+    scheme: ZzcScheme,
+    target_dicts: tuple[str, ...] = (),
+    dict_root: Path | None = None,
+) -> tuple[Path, ...]:
     if not target_dicts:
         return ()
+    base_root = dict_root or scheme.root
     out: list[Path] = []
     for item in target_dicts:
         path = Path(item)
         if not path.is_absolute():
-            path = scheme.root / item
+            path = base_root / item
         out.append(path)
     return tuple(out)
 
@@ -327,46 +410,78 @@ def dict_code_at(lines: list[str], index: int) -> str | None:
 
 
 def find_insert_index(lines: list[str], code: str) -> int:
-    valid_indexes: list[tuple[int, str]] = []
+    previous_index = -1
     for index, line in enumerate(lines):
         row = parse_dict_row(line)
-        if row and is_merge_code(row[1]):
-            valid_indexes.append((index, row[1]))
-    if not valid_indexes:
-        return len(lines)
-
-    same_indexes = [index for index, row_code in valid_indexes if row_code == code]
-    if same_indexes:
-        return same_indexes[0]
-
-    previous_code = ""
-    for _, row_code in valid_indexes:
-        if row_code < code and row_code > previous_code:
-            previous_code = row_code
-
-    if previous_code:
-        insert_after = max(index for index, row_code in valid_indexes if row_code == previous_code)
-        index = insert_after + 1
-        while index < len(lines) and dict_code_at(lines, index) == previous_code:
-            index += 1
-        return index
-
-    return valid_indexes[0][0]
+        if not row:
+            continue
+        row_code = row[1]
+        if not is_merge_code(row_code):
+            continue
+        if row_code == code:
+            return index
+        if row_code > code:
+            return previous_index + 1 if previous_index >= 0 else index
+        previous_index = index
+    return previous_index + 1 if previous_index >= 0 else len(lines)
 
 
-def insert_rows_by_code(lines: list[str], rows: list[tuple[str, str]]) -> list[str]:
-    out = list(lines)
-    for word, code in sorted(rows, key=lambda item: (item[1], item[0])):
-        index = find_insert_index(out, code)
-        out.insert(index, f"{word}\t{code}")
-    return out
+def build_code_locations(paths: tuple[Path, ...]) -> dict[str, Path]:
+    locations: dict[str, Path] = {}
+    for path in paths:
+        if not path.exists():
+            continue
+        for line in read_text(path).splitlines():
+            row = parse_dict_row(line)
+            if row:
+                locations.setdefault(row[1], path)
+    return locations
+
+
+def existing_word_code_pairs(paths: tuple[Path, ...]) -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    for path in paths:
+        if not path.exists():
+            continue
+        for line in read_text(path).splitlines():
+            row = parse_dict_row(line)
+            if row:
+                pairs.add(row)
+    return pairs
+
+
+def insert_rows_by_code(
+    dict_lines: dict[Path, list[str]],
+    keep_rows: list[tuple[str, str]],
+    code_locations: dict[str, Path],
+    fallback: Path,
+) -> dict[Path, int]:
+    inserted_by_path: dict[Path, int] = {}
+    rows_by_path: dict[Path, list[tuple[str, str]]] = {}
+    for word, code in keep_rows:
+        path = code_locations.get(code, fallback)
+        rows_by_path.setdefault(path, []).append((word, code))
+
+    for path, rows in rows_by_path.items():
+        lines = dict_lines.setdefault(path, [])
+        rows_by_code: dict[str, list[str]] = {}
+        for word, code in rows:
+            rows_by_code.setdefault(code, []).append(f"{word}\t{code}")
+        for code in sorted(rows_by_code.keys(), reverse=True):
+            insert_at = find_insert_index(lines, code)
+            for row_line in reversed(rows_by_code[code]):
+                lines.insert(insert_at, row_line)
+                inserted_by_path[path] = inserted_by_path.get(path, 0) + 1
+    return inserted_by_path
 
 
 def create_rollback_log(scheme: ZzcScheme, ops_count: int, keep_count: int, target_dicts: tuple[Path, ...]) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     log_dir = scheme.rollback_logs / stamp
     dict_dir = log_dir / "dicts"
+    state_dir = log_dir / "state"
     dict_dir.mkdir(parents=True, exist_ok=True)
+    state_dir.mkdir(parents=True, exist_ok=True)
     manifest = [
         f"created_at={datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"schema={scheme.schema}",
@@ -378,6 +493,32 @@ def create_rollback_log(scheme: ZzcScheme, ops_count: int, keep_count: int, targ
     ]
     if scheme.ops.exists():
         shutil.copy2(scheme.ops, log_dir / "before_zzc.dict.yaml")
+    for state_path in (
+        scheme.char_parts,
+        scheme.index,
+        scheme.runtime_ops,
+        scheme.effective_state,
+        scheme.runtime_exact,
+        scheme.cache_version,
+        scheme.reset_marker,
+        scheme.reset_seen,
+        scheme.root / f"{scheme.schema}.zzc.ops.tsv",
+        scheme.zzc_dir / "char_parts.tsv",
+        scheme.zzc_dir / "index.tsv",
+        scheme.zzc_dir / "ops.tsv",
+        scheme.zzc_dir / "pending.tsv",
+        scheme.zzc_dir / "runtime_ops.tsv",
+        scheme.zzc_dir / "runtime_exact.tsv",
+        scheme.zzc_dir / "effective_state.tsv",
+        scheme.zzc_dir / "cache_version.txt",
+        scheme.zzc_dir / "zzc_reset.tsv",
+        scheme.zzc_dir / "zzc_reset_seen.tsv",
+    ):
+        if state_path.exists():
+            rel = state_path.relative_to(scheme.root)
+            backup_path = state_dir / rel
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(state_path, backup_path)
     for path in target_dicts:
         if path.exists():
             shutil.copy2(path, dict_dir / path.name)
@@ -387,8 +528,22 @@ def create_rollback_log(scheme: ZzcScheme, ops_count: int, keep_count: int, targ
 
 
 def merge_into_real_dicts(scheme: ZzcScheme, target_dicts: tuple[Path, ...], ops: list[dict[str, str]], keep_rows: list[tuple[str, str]], order_map: dict[str, list[str]], logger=print) -> None:
-    words_to_remove = {row["word"] for row in ops if row["mark"] in {"+", "-"} and not row.get("append")}
-    exact_to_remove = {(row["word"], row["code"]) for row in ops if row["mark"] == "!"}
+    latest = latest_state_by_word_code(ops)
+    existing_pairs = existing_word_code_pairs(target_dicts)
+    keep_set = set(keep_rows)
+    already_merged = keep_set & existing_pairs
+    words_to_remove = {
+        row["word"]
+        for key, row in latest.items()
+        if key not in already_merged
+        and row["mark"] in {"+", "-"}
+        and not row.get("append")
+        and not row.get("restore")
+    }
+    exact_to_remove = {(word, code) for (word, code), row in latest.items() if row["mark"] == "!"}
+    rows_to_insert = [row for row in keep_rows if row not in already_merged]
+    code_locations = build_code_locations(target_dicts)
+    dict_lines: dict[Path, list[str]] = {}
     for path in target_dicts:
         if not path.exists():
             continue
@@ -402,20 +557,37 @@ def merge_into_real_dicts(scheme: ZzcScheme, target_dicts: tuple[Path, ...], ops
                     removed += 1
                     continue
             kept.append(line)
-        kept = reorder_dict_lines(kept, order_map)
-        write_text(path, "\n".join(kept) + "\n")
+        dict_lines[path] = reorder_dict_lines(kept, order_map)
         logger(f"[zzc] 已整理 {path.name}，移除 {removed} 条")
-    target = target_dicts[0] if target_dicts else None
-    if target is not None and target.exists() and keep_rows:
-        lines = read_text(target).splitlines()
-        lines = insert_rows_by_code(lines, keep_rows)
-        write_text(target, "\n".join(lines) + "\n")
-        logger(f"[zzc] 已写入最终 zzc 词条：{target.name}，{len(keep_rows)} 条")
+    fallback = target_dicts[0] if target_dicts else None
+    inserted_by_path: dict[Path, int] = {}
+    if fallback is not None and rows_to_insert:
+        inserted_by_path = insert_rows_by_code(dict_lines, rows_to_insert, code_locations, fallback)
+    for path, lines in dict_lines.items():
+        write_text(path, "\n".join(lines) + "\n")
+    if already_merged:
+        logger(f"[zzc] 已跳过正式码表已有词条：{len(already_merged)} 条")
+    for path, count in inserted_by_path.items():
+        logger(f"[zzc] 已写入最终 zzc 词条：{path.name}，{count} 条")
 
 
 def touch_cache_version(scheme: ZzcScheme) -> None:
-    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    write_text(scheme.cache_version, f"{stamp}\n")
+    write_text(scheme.cache_version, f"cache_token\t{secrets.token_hex(8)}\n")
+
+
+def write_reset_marker(scheme: ZzcScheme) -> None:
+    write_text(
+        scheme.reset_marker,
+        "\n".join(
+            [
+                "version\t2",
+                f"schema\t{scheme.schema}",
+                "mode\tfull_reset",
+                f"reset_token\t{secrets.token_hex(16)}",
+            ]
+        )
+        + "\n",
+    )
 
 
 def clear_ops(scheme: ZzcScheme) -> None:
@@ -425,20 +597,35 @@ def clear_ops(scheme: ZzcScheme) -> None:
 
 def clear_runtime_cache(scheme: ZzcScheme, logger=print) -> None:
     removed = 0
-    for group_file in scheme.zzc_dir.glob("group_*.tsv"):
+    for group_file in list(scheme.state_dir.glob("group_*.tsv")) + list(scheme.zzc_dir.glob("group_*.tsv")):
         group_file.unlink()
         removed += 1
     write_text(scheme.index, "")
-    write_text(scheme.zzc_dir / "runtime_exact.tsv", "")
+    write_text(scheme.runtime_ops, "")
+    write_text(scheme.runtime_exact, "")
+    write_text(scheme.effective_state, "")
+    for legacy in (
+        scheme.zzc_dir / "index.tsv",
+        scheme.zzc_dir / "runtime_ops.tsv",
+        scheme.zzc_dir / "runtime_exact.tsv",
+        scheme.zzc_dir / "effective_state.tsv",
+    ):
+        if legacy.exists():
+            write_text(legacy, "")
     logger(f"[zzc] 已清空运行快照：group={removed}")
 
 
-def merge_root(root: Path, target_dicts: tuple[str, ...] = (), logger=print) -> bool:
+def merge_root(
+    root: Path,
+    target_dicts: tuple[str, ...] = (),
+    dict_root: Path | None = None,
+    logger=print,
+) -> bool:
     scheme = find_scheme(root)
     if not scheme:
         logger(f"[zzc] 未找到 *.zzc.dict.yaml：{root}")
         return False
-    resolved_targets = resolve_target_dicts(scheme, target_dicts)
+    resolved_targets = resolve_target_dicts(scheme, target_dicts, dict_root=dict_root)
     if not resolved_targets:
         raise ValueError("请先选择合并目标码表。")
     missing = [path for path in resolved_targets if not path.exists()]
@@ -447,7 +634,7 @@ def merge_root(root: Path, target_dicts: tuple[str, ...] = (), logger=print) -> 
     started = perf_counter()
     char_count = rebuild_char_parts(scheme)
     logger(f"[zzc] 已重建 char_parts.tsv：{char_count} 字")
-    ops = load_ops(scheme)
+    ops = compact_ops(load_ops(scheme))
     keep_rows = final_rows_from_ops(ops)
     logger(f"[zzc] 待合并操作：{len(ops)} 条；最终写入：{len(keep_rows)} 条")
     if not ops:
@@ -457,22 +644,33 @@ def merge_root(root: Path, target_dicts: tuple[str, ...] = (), logger=print) -> 
     merge_into_real_dicts(scheme, resolved_targets, ops, keep_rows, latest_order_map(ops), logger=logger)
     clear_ops(scheme)
     clear_runtime_cache(scheme, logger=logger)
+    write_reset_marker(scheme)
     logger(f"[zzc] 合并完成，用时 {perf_counter() - started:.1f} 秒")
     return True
 
 
-def copy_managed_files(source_root: Path, target_root: Path, target_dicts: tuple[str, ...] = (), logger=print) -> None:
+def copy_managed_files(
+    source_root: Path,
+    target_root: Path,
+    target_dicts: tuple[str, ...] = (),
+    logger=print,
+    copy_target_dicts: bool = True,
+) -> None:
     scheme = find_scheme(source_root)
     if not scheme:
         return
     files = [
         source_root / f"{scheme.schema}.zzc.dict.yaml",
-        source_root / "zzc" / "char_parts.tsv",
-        source_root / "zzc" / "index.tsv",
-        source_root / "zzc" / "runtime_exact.tsv",
-        source_root / "zzc" / "cache_version.txt",
+        source_root / "zzc_state" / "char_parts.tsv",
+        source_root / "zzc_state" / "index.tsv",
+        source_root / "zzc_state" / "runtime_ops.tsv",
+        source_root / "zzc_state" / "runtime_exact.tsv",
+        source_root / "zzc_state" / "effective_state.tsv",
+        source_root / "zzc_state" / "cache_version.tsv",
+        source_root / "zzc_state" / "zzc_reset.tsv",
     ]
-    files.extend(resolve_target_dicts(scheme, target_dicts))
+    if copy_target_dicts:
+        files.extend(resolve_target_dicts(scheme, target_dicts))
     for path in files:
         if not path.exists():
             continue
