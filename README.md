@@ -16,7 +16,8 @@ Version: `1.0.0`
 - Include rules for syncing only selected files or folders.
 - Source exclusion rules for content that should not be copied.
 - Target protected content that will not be deleted or overwritten.
-- Event-based source folder watching with configurable trigger delay.
+- Target cleanup scope for limiting where extra target files may be deleted.
+- Event-based source and managed-target folder watching with configurable trigger delay.
 - Optional cleanup of extra target files.
 - Tray background mode with pause, resume, manual sync, log opening, and close-to-tray behavior.
 - Optional startup mode that launches in the background and starts synchronization automatically.
@@ -58,9 +59,25 @@ The source folder is the authority. The target folder is managed to match the se
 - `Include` controls what should be synced. Empty means everything.
 - `Exclude` removes matching source content from syncing.
 - `Keep` protects matching target content from deletion and overwrite.
-- `Clean extra target files` removes unmanaged target files unless they match `Keep`.
+- `Deleted Files` controls where extra target files may be deleted. Empty means the whole target.
+- `Clean extra target files` removes unmanaged target files inside `Deleted Files` unless they match `Keep`.
 
 Folder rules usually use the `folder/**` pattern.
+
+## Multi-Task Mode
+
+The app can run multiple enabled tasks from `tasks[]`.
+
+- Every task watches its own source and syncs to its target.
+- On each change, files are copied or overwritten unless protected, and extra target files are deleted when `Clean extra target files` allows it.
+- A task can also merge zzc records when its merge settings are enabled.
+- Different target resources run in parallel.
+- Same or parent/child target resources are serialized.
+- Empty `tasks: []` keeps the legacy single-task form.
+
+The desktop UI can add, duplicate, delete, enable, and edit tasks. New tasks are disabled by default until their paths are filled.
+
+When auto zzc merge is enabled, sync protects `*.zzc.dict.yaml` and `zzc_state/zzc_reset.tsv`; the merge step owns updates to them.
 
 ## Author
 

@@ -15,8 +15,12 @@
   "exclude": [],
 
   // 目标中哪些内容不由程序管理。
-  // 被 target_protect 命中的内容不会因为目标与来源不一致而被自动删除。
+  // 被 target_protect 命中的内容不会被覆盖，也不会因为目标与来源不一致而被自动删除。
   "target_protect": [],
+
+  // 目标中哪些位置允许自动清理多余内容。
+  // 留空 [] 表示允许清理整个目标；填写 "zzc_state/**" 表示只清理目标 zzc_state 文件夹。
+  "target_clean": [],
 
   // 来源内容变动后延迟多少秒再同步。0 表示立即同步。
   "interval_seconds": 0,
@@ -24,12 +28,40 @@
   // 是否删除目标中多出的文件，让目标与来源中被选择同步的内容一致。
   "delete_extra": true,
 
-  // 定时任务。
+  // 任务列表。每个任务都会实时监测来源变化，并按规则复制、覆盖、删除目标内容。
+  // 留空 [] 表示继续兼容旧单任务配置。
+  // Example:
+  // "tasks": [
+  //   {
+  //     "id": "sync-main",
+  //     "name": "Main sync",
+  //     "enabled": true,
+  //     "source": "D:/SourceA",
+  //     "target": "D:/TargetA",
+  //     "include": [],
+  //     "exclude": [],
+  //     "target_protect": [],
+  //     "target_clean": [],
+  //     "delete_extra": true,
+  //     "interval_seconds": 0,
+  //     "scheduled_tasks": {
+  //       "auto_merge_zzc": true,
+  //       "zzc_target_dicts": ["txjx.dict.yaml"],
+  //       "zzc_merge_interval_minutes": 30,
+  //       "startup_auto_merge": false,
+  //       "startup_delay_minutes": 10,
+  //       "auto_deploy_after_merge": false,
+  //       "deploy_command": ""
+  //     }
+  //   }
+  // ],
+  "tasks": [],
+
   "scheduled_tasks": {
-    // 定时合并天行键自造词。来源文件夹应为 iCloud 方案目录，目标文件夹应为本机 RimeData。
+    // 定时合并自造词。兼容旧单任务配置时，会用本机目标目录的 zzc 合并到来源目录的正式码表。
     "auto_merge_zzc": false,
 
-    // 合并写入哪些正式码表，路径相对来源文件夹。必须选择至少一个；新增词写入第一个目标码表。
+    // 合并写入哪些正式码表，路径相对合并任务目标文件夹。必须选择至少一个；新增词写入第一个目标码表。
     "zzc_target_dicts": [],
 
     // 自动合并自造词的最小间隔，单位分钟。
