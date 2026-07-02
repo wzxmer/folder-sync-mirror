@@ -1307,6 +1307,7 @@ class MirrorTrayApp:
             values=tuple(self.merge_unit_label(item) for item in MERGE_UNIT_KEYS),
             state="readonly",
             width=6,
+            height=len(MERGE_UNIT_KEYS),
             font=(UI_FONT, 10),
         )
         self.zzc_merge_unit_select.pack(side="left", padx=(8, 0))
@@ -2143,7 +2144,11 @@ class MirrorTrayApp:
             config = self.config_from_form()
             self.current_config = config
             save_config(CONFIG_PATH, config)
-            self.refresh_task_list(self.selected_task_id)
+            self.loading_form = True
+            try:
+                self.refresh_task_list(self.selected_task_id)
+            finally:
+                self.loading_form = False
             self.apply_startup_setting()
             self.log("已从窗口保存配置")
             self.flash_status("已保存配置", 2000)
@@ -2159,7 +2164,11 @@ class MirrorTrayApp:
             config = self.config_from_form()
             self.current_config = config
             save_config(CONFIG_PATH, config)
-            self.refresh_task_list(self.selected_task_id)
+            self.loading_form = True
+            try:
+                self.refresh_task_list(self.selected_task_id)
+            finally:
+                self.loading_form = False
             self.apply_startup_setting()
             self.log("已自动保存配置")
             self.request_sync_after_config_change()
