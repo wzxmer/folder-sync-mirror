@@ -1,0 +1,77 @@
+{
+  // 参考配置：把 Hamster 的天行键目录同步到本机 Rime 用户目录。
+  // 使用前请替换路径。不要把真实用户名、iCloud 绝对路径和本机部署命令暴露到公开截图或 issue。
+  "source": "C:/Users/<you>/iCloudDrive/iCloud~com~ihsiao~apps~Hamster3/RimeUserData/txjx",
+  "target": "D:/RimeData",
+  "include": [],
+  "exclude": [
+    "__pycache__/**",
+    "*.pyc",
+    "build/**",
+    "dist/**",
+    "*.txt"
+  ],
+  "target_protect": [
+    "*.zzc.dict.yaml",
+    "zzc_state/**",
+    "txjx.custom.yaml",
+    "default.custom.yaml",
+    "user.yaml",
+    "installation.yaml",
+    "build/**"
+  ],
+  "target_clean": [],
+  "interval_seconds": 0,
+  "delete_extra": true,
+  "tasks": [
+    {
+      "id": "sync-txjx",
+      "name": "天行键同步",
+      "enabled": true,
+      "source": "C:/Users/<you>/iCloudDrive/iCloud~com~ihsiao~apps~Hamster3/RimeUserData/txjx",
+      "target": "D:/RimeData",
+      "include": [],
+      "exclude": [
+        "__pycache__/**",
+        "*.pyc",
+        "build/**",
+        "dist/**",
+        "*.txt"
+      ],
+      "target_protect": [
+        "*.zzc.dict.yaml",
+        "zzc_state/**",
+        "txjx.custom.yaml",
+        "default.custom.yaml",
+        "user.yaml",
+        "installation.yaml",
+        "build/**"
+      ],
+      "target_clean": [],
+      "delete_extra": true,
+      "interval_seconds": 0,
+      "scheduled_tasks": {
+        "auto_merge_zzc": false,
+        "zzc_target_dicts": [
+          "txjx.dict.yaml"
+        ],
+        "zzc_merge_interval_minutes": 30,
+        "startup_auto_merge": false,
+        "startup_delay_minutes": 10,
+        "auto_deploy_after_merge": false,
+        "deploy_command": "\"C:\\Program Files\\Rime\\weasel-0.17.4\\WeaselDeployer.exe\" /deploy"
+      }
+    }
+  ],
+  "scheduled_tasks": {
+    "auto_merge_zzc": false,
+    "zzc_target_dicts": [
+      "txjx.dict.yaml"
+    ],
+    "zzc_merge_interval_minutes": 30,
+    "startup_auto_merge": false,
+    "startup_delay_minutes": 10,
+    "auto_deploy_after_merge": false,
+    "deploy_command": "\"C:\\Program Files\\Rime\\weasel-0.17.4\\WeaselDeployer.exe\" /deploy"
+  }
+}

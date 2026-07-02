@@ -1,85 +1,106 @@
 # 天行键同步助手
 
-天行键同步助手 is a desktop tray app for txjx folder synchronization and zzc merge. It watches a source folder, copies selected content into a target folder, and can remove extra target files so the target stays consistent with the selected source content.
+天行键同步助手是一个用于 txjx 方案同步和 zzc 自造词合并的桌面托盘软件。它会监听“来源”文件夹的变化，把选中的内容同步到“目标”文件夹，并可以删除目标中多出的文件，让目标与来源中被选择同步的内容保持一致。
 
-Version: `1.0.0`
+当前版本：`1.0.0`
 
-[中文介绍](docs/README.zh-CN.md)
+![中文界面](docs/images/zh-interface-home.png)
 
-![English interface](docs/images/english-interface.png)
+## 主要功能
 
-## Features
+- 来源到目标的单向同步。
+- 在软件中选择来源文件夹和目标文件夹。
+- 软件内可切换中文和英文界面。
+- 可设置只同步哪些文件或文件夹。
+- 可排除来源中不需要同步的内容。
+- 可设置保护文件，这些内容不会被删除，也不会被覆盖。
+- 可设置删除文件范围，只在指定目标位置删除多余文件。
+- 监听来源变化后自动同步，可设置触发延迟，最低 0 秒。
+- 可清理目标中多出的文件。
+- 支持托盘后台运行、暂停、继续、立即同步、立即合并、立即部署和打开日志。
+- 点击关闭窗口会收起到托盘，不会退出程序。
+- 可开启开机启动并自动开始同步。
+- 日志按大小自动清理。
 
-- One-way source-to-target synchronization.
-- Source and target folder selection in the app.
-- Language switch between Chinese and English.
-- Include rules for syncing only selected files or folders.
-- Source exclusion rules for content that should not be copied.
-- Target protected content that will not be deleted or overwritten.
-- Target cleanup scope for limiting where extra target files may be deleted.
-- Event-based source and managed-target folder watching with configurable trigger delay.
-- Optional cleanup of extra target files.
-- Tray background mode with pause, resume, manual sync, log opening, and close-to-tray behavior.
-- Optional startup mode that launches in the background and starts synchronization automatically.
-- Log cleanup by size.
+## 自动打包
 
-## Usage
+GitHub Actions 会自动打包发布产物：
 
-Download the installer for your platform from the release page.
+- 推送到 `master`：构建 Windows、macOS、Linux 产物并保存在 Actions artifacts。
+- 推送 `v*` 标签：构建并上传到对应 GitHub Release。
+- 手动运行 `workflow_dispatch`：按输入的 `release_tag` 上传到指定 Release。
 
-Windows users can install with:
+Windows 产物：
 
 ```text
 txjxSyncAssistant_1.0.0_x64-setup.exe
+txjxSyncAssistant.exe
 ```
 
-Windows also provides `txjxSyncAssistant.exe` as a portable option.
-
-macOS users can install with:
+macOS 产物：
 
 ```text
 txjxSyncAssistant_1.0.0_x64.dmg
 ```
 
-Linux users can install the DEB or RPM package:
+Linux 产物：
 
 ```text
 txjxSyncAssistant_1.0.0_amd64.deb
 txjxSyncAssistant_1.0.0_x86_64.rpm
 ```
 
-Synchronization is disabled by default. Select a source folder and target folder, adjust the rules if needed, then click `Start Sync`. After synchronization starts, the same button becomes `Pause Sync`.
+## 使用方法
 
-Closing the window hides the app to the tray instead of exiting. Use the in-app `Exit` button or the tray menu to quit.
+默认不会自动启动同步。先选择来源文件夹和目标文件夹，再按需要设置复制范围、排除文件、保护文件和删除文件，最后点击“启动同步”。启动后按钮会变成“暂停同步”。
 
-## Rules
+关闭窗口只会收起到托盘。需要退出时，请点击窗口里的“退出”或托盘菜单里的“退出”。
 
-The source folder is the authority. The target folder is managed to match the selected source content.
+## 天行键参考配置
 
-- `Include` controls what should be synced. Empty means everything.
-- `Exclude` removes matching source content from syncing.
-- `Keep` protects matching target content from deletion and overwrite.
-- `Deleted Files` controls where extra target files may be deleted. Empty means the whole target.
-- `Clean extra target files` removes unmanaged target files inside `Deleted Files` unless they match `Keep`.
+如果要把 Hamster 的 iCloud 天行键目录同步到本机 Rime 用户目录，可以参考 [docs/txjx-reference-config.jsonc](docs/txjx-reference-config.jsonc)。这份配置来自日常使用配置，但已经脱敏本机用户名、iCloud 绝对路径和本地环境细节。
 
-Folder rules usually use the `folder/**` pattern.
+关键规则：
 
-## Multi-Task Mode
+- 来源排除 Python 缓存、构建目录、打包目录和临时文本文件。
+- 目标保护 `*.zzc.dict.yaml`、`zzc_state/**`、本机 custom YAML、`user.yaml`、`installation.yaml` 和 `build/**`。
+- `target_clean` 留空表示允许清理整个目标，必须依赖保护规则兜住本机专有文件。
+- 使用自造词合并时，`zzc_target_dicts` 保持为 `txjx.dict.yaml`。
 
-The app can run multiple enabled tasks from `tasks[]`.
+个人 `config.json` 只留在本机；仓库已忽略该文件。
 
-- Every task watches its own source and syncs to its target.
-- On each change, files are copied or overwritten unless protected, and extra target files are deleted when `Clean extra target files` allows it.
-- A task can also merge zzc records when its merge settings are enabled.
-- Different target resources run in parallel.
-- Same or parent/child target resources are serialized.
-- Empty `tasks: []` keeps the legacy single-task form.
+## 规则说明
 
-The desktop UI can add, duplicate, delete, enable, and edit tasks. New tasks are disabled by default until their paths are filled.
+来源是标准内容，目标是被同步和清理的目录。
 
-When auto zzc merge is enabled, sync protects `*.zzc.dict.yaml` and `zzc_state/zzc_reset.tsv`; the merge step owns updates to them.
+- `复制范围`：从来源复制哪些内容。留空表示同步全部。
+- `排除文件`：来源中哪些内容不复制到目标，优先级高于复制范围。
+- `保护文件`：目标中哪些内容不覆盖、不删除。
+- `删除文件`：目标中哪些位置允许删除多余文件。留空表示允许清理整个目标。
+- `清理目标多余文件`：开启后，只在删除文件范围内删除不属于同步结果且不在保护文件里的文件。
 
-## Author
+文件夹规则通常使用：
 
-Author: 浮生  
-Email: wzxmer@outlook.com
+```text
+folder/**
+```
+
+## 多任务模式
+
+软件可以从 `tasks[]` 同时运行多个已启用任务。
+
+- 每个任务都会实时监测自己的来源，并同步到自己的目标。
+- 每次变动后，未被保护的内容会按规则覆盖；多余目标文件会在“清理目标多余文件”和“删除文件”范围允许时删除。
+- 任务启用合并设置后，也可以合并自造词、清空待合并记录，并写入 `zzc_state/zzc_reset.tsv`。
+- 不同目标资源可以并行。
+- 相同目标或父子目标路径会自动串行。
+- `tasks: []` 为空时继续兼容旧单任务配置。
+
+桌面 UI 可以新增、复制、删除、启用和编辑任务。新任务默认禁用，填好路径后再启用。
+
+开启自动合并自造词后，同步会保护 `*.zzc.dict.yaml` 和 `zzc_state/zzc_reset.tsv`；这两个文件由合并步骤负责更新。
+
+## 作者
+
+作者：浮生
+邮箱：wzxmer@outlook.com

@@ -1,10 +1,8 @@
-# 天行键同步助手中文介绍
+# 天行键同步助手
 
 天行键同步助手是一个用于 txjx 方案同步和 zzc 自造词合并的桌面托盘软件。它会监听“来源”文件夹的变化，把选中的内容同步到“目标”文件夹，并可以删除目标中多出的文件，让目标与来源中被选择同步的内容保持一致。
 
 当前版本：`1.0.0`
-
-[English README](../README.md)
 
 ![中文界面](images/zh-interface-home.png)
 
@@ -19,39 +17,57 @@
 - 可设置删除文件范围，只在指定目标位置删除多余文件。
 - 监听来源变化后自动同步，可设置触发延迟，最低 0 秒。
 - 可清理目标中多出的文件。
-- 支持托盘后台运行、暂停、继续、立即同步、打开日志。
+- 支持托盘后台运行、暂停、继续、立即同步、立即合并、立即部署和打开日志。
 - 点击关闭窗口会收起到托盘，不会退出程序。
 - 可开启开机启动并自动开始同步。
 - 日志按大小自动清理。
 
-## 使用方法
+## 自动打包
 
-从 Release 页面下载对应平台的安装包。
+GitHub Actions 会自动打包发布产物：
 
-Windows 可安装：
+- 推送到 `master`：构建 Windows、macOS、Linux 产物并保存在 Actions artifacts。
+- 推送 `v*` 标签：构建并上传到对应 GitHub Release。
+- 手动运行 `workflow_dispatch`：按输入的 `release_tag` 上传到指定 Release。
+
+Windows 产物：
 
 ```text
 txjxSyncAssistant_1.0.0_x64-setup.exe
+txjxSyncAssistant.exe
 ```
 
-Windows 也会提供 `txjxSyncAssistant.exe` 作为免安装版本。
-
-macOS 可安装：
+macOS 产物：
 
 ```text
 txjxSyncAssistant_1.0.0_x64.dmg
 ```
 
-Linux 可安装 DEB 或 RPM：
+Linux 产物：
 
 ```text
 txjxSyncAssistant_1.0.0_amd64.deb
 txjxSyncAssistant_1.0.0_x86_64.rpm
 ```
 
+## 使用方法
+
 默认不会自动启动同步。先选择来源文件夹和目标文件夹，再按需要设置复制范围、排除文件、保护文件和删除文件，最后点击“启动同步”。启动后按钮会变成“暂停同步”。
 
 关闭窗口只会收起到托盘。需要退出时，请点击窗口里的“退出”或托盘菜单里的“退出”。
+
+## 天行键参考配置
+
+如果要把 Hamster 的 iCloud 天行键目录同步到本机 Rime 用户目录，可以参考 [txjx-reference-config.jsonc](txjx-reference-config.jsonc)。这份配置来自日常使用配置，但已经脱敏本机用户名、iCloud 绝对路径和本地环境细节。
+
+关键规则：
+
+- 来源排除 Python 缓存、构建目录、打包目录和临时文本文件。
+- 目标保护 `*.zzc.dict.yaml`、`zzc_state/**`、本机 custom YAML、`user.yaml`、`installation.yaml` 和 `build/**`。
+- `target_clean` 留空表示允许清理整个目标，必须依赖保护规则兜住本机专有文件。
+- 使用自造词合并时，`zzc_target_dicts` 保持为 `txjx.dict.yaml`。
+
+个人 `config.json` 只留在本机；仓库已忽略该文件。
 
 ## 规则说明
 
